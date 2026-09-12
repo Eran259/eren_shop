@@ -734,7 +734,7 @@ body{{font-family:Arial,sans-serif;background:#000;color:#fff;padding-bottom:80p
 .bottom-nav a{{display:flex;flex-direction:column;align-items:center;text-decoration:none;color:#fff;font-size:11px;}}
 .bottom-nav a .icon{{font-size:22px;}}
 </style></head><body>
-<div class="header"><a href="/order" class="back-btn">← Back</a><h1>📦 {display_name}</h1></div>
+<div class="header"><a href="javascript:void(0)" onclick="goBack()" class="back-btn">← Back</a><h1>📦 {display_name}</h1></div>
 <div class="container">{packages_html}</div>
 <div class="bottom-nav">
 <a href="/dashboard"><span class="icon">🏠</span>Shop</a>
@@ -742,6 +742,15 @@ body{{font-family:Arial,sans-serif;background:#000;color:#fff;padding-bottom:80p
 <a href="/orders"><span class="icon">📦</span>Orders</a>
 <a href="/profile"><span class="icon">👤</span>Profile</a>
 </div>
+<script>
+function goBack() {{
+    if (window.Telegram && window.Telegram.WebApp) {{
+        window.Telegram.WebApp.close();
+    }} else {{
+        window.history.back();
+    }}
+}}
+</script>
 </body></html>"""
 
 # ==================================================
