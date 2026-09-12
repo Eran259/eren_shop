@@ -632,7 +632,7 @@ def wallet():
             threading.Thread(target=send_to_owner, daemon=True).start()
             message = f"✅ Deposit #{deposit_id} ပို့ပြီးပါပြီ။"
 
-          cursor.execute("""
+    cursor.execute("""
         SELECT 'confirmed' as type, id, username, amount, description, created_at FROM wallet_transactions WHERE username=?
         UNION ALL
         SELECT 'pending', id, username, amount, status, created_at FROM deposit_requests WHERE username=? AND status='Pending'
