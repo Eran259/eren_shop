@@ -242,45 +242,12 @@ a { color: #00e5ff; text-decoration: none; }
 """
 
 # ==================================================
-# ML ID CHECK (WhoPlays API)
+# ML ID CHECK (WhoPlays ပျက်နေလို့ ယာယီပိတ်ထားတယ်)
 # ==================================================
 def check_ml_id(player_id, zone_id):
-    """MLBB Player ID နဲ့ Zone ID မှန်/မမှန် စစ်ဆေးတဲ့ Function"""
-    if not WHOPLAYS_API_KEY:
-        return {"success": False, "error": "WhoPlays API Key မရှိပါ"}
-
-    try:
-        headers = {
-            "Content-Type": "application/json",
-            "X-API-Key": WHOPLAYS_API_KEY
-        }
-        payload = {
-            "game": "mobile-legends",
-            "userId": str(player_id).strip(),
-            "zoneId": str(zone_id).strip()
-        }
-        response = requests.post(WHOPLAYS_API_URL, json=payload, headers=headers, timeout=15)
-
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("success") or data.get("username") or data.get("name"):
-                return {
-                    "success": True,
-                    "username": data.get("username") or data.get("name") or data.get("nickname") or "Unknown",
-                    "raw": data
-                }
-            return {"success": False, "error": data.get("message", "Player မတွေ့ပါ"), "raw": data}
-        elif response.status_code == 404:
-            return {"success": False, "error": "Player မတွေ့ပါ (ID/Zone မှားနိုင်သည်)"}
-        elif response.status_code == 429:
-            return {"success": False, "error": "Rate limit ကျော်သွားပါပြီ။ ခဏစောင့်ပါ။"}
-        else:
-            return {"success": False, "error": f"API Error: {response.status_code}"}
-    except requests.exceptions.Timeout:
-        return {"success": False, "error": "API အချိန်ကုန်သွားပါပြီ"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
+    """Temporary Close Check ID"""
+    return {"success": False, "error": "ID Check လောလောဆယ် မရနိုင်ပါ။ ID ကို ကိုယ်တိုင် သေချာစစ်ဆေးပါ။"}
+    
   # ==================================================
 # SMILE ONE API
 # ==================================================
