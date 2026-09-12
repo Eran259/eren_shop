@@ -278,6 +278,46 @@ def get_smile_one_code(amount, product_type, email=None):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+# ==================================================
+# FAZERCARDS API (MLBB Auto Top Up)
+# ==================================================
+FAZER_API_URL = os.environ.get("FAZER_API_URL", "https://api.fzr.cards/api/v2")
+FAZER_API_KEY = os.environ.get("FAZER_API_KEY", "")
+
+def fazer_create_order(product_id, player_id, zone_id, quantity=1):
+    """FazerCards API ကနေ MLBB Order တင်တဲ့ Function"""
+    if not FAZER_API_KEY:
+        return {"success": False, "error": "FazerCards API Key မရှိပါ"}
+
+    try:
+        url = f"{FAZER_API_URL}/orders"
+        headers = {
+            "Content-Type": "application/json",
+            "X-API-Key": FAZER_API_KEY
+        }
+        payload = {
+            "product_id": product_id,
+            "quantity": quantity,
+            "player_id": str(player_id).strip(),
+            "zone_id": str(zone_id).strip()
+        }
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+
+        if response.status_code in (200, 201):
+            data = response.json()
+            return {
+                "success": True,
+                "order_id": data.get("order_id") or data.get("id"),
+                "status": data.get("status"),
+                "raw": data
+            }
+        else:
+            return {"success": False, "error": f"API Error: {response.status_code} - {response.text[:200]}"}
+    except requests.exceptions.Timeout:
+        return {"success": False, "error": "FazerCards API အချိန်ကုန်သွားပါပြီ"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
       # ==================================================
 # TELEGRAM HELPERS
 # ==================================================
