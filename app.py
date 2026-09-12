@@ -284,40 +284,48 @@ def get_smile_one_code(amount, product_type, email=None):
 FAZER_API_URL = os.environ.get("FAZER_API_URL", "https://api.fzr.cards/api/v2")
 FAZER_API_KEY = os.environ.get("FAZER_API_KEY", "")
 
-def fazer_create_order(product_id, player_id, zone_id, quantity=1):
-    """FazerCards API ကနေ MLBB Order တင်တဲ့ Function"""
+def fazer_create_order(game_id, key_id, quantity=1, idempotency_key=None):
+    """FazerCards API ကနေ Game Key Order တင်တဲ့ Function"""
     if not FAZER_API_KEY:
         return {"success": False, "error": "FazerCards API Key မရှိပါ"}
 
     try:
-        url = f"{FAZER_API_URL}/orders"
+        url = f"{FAZER_API_URL}/gamekeys/order"
         headers = {
             "Content-Type": "application/json",
             "X-API-Key": FAZER_API_KEY
         }
+        if idempotency_key:
+            headers["idempotency-key"] = idempotency_key
+
         payload = {
-            "product_id": product_id,
-            "quantity": quantity,
-            "player_id": str(player_id).strip(),
-            "zone_id": str(zone_id).strip()
+            "game_id": str(game_id).strip(),
+            "key_id": str(key_id).strip(),
+            "quantity": int(quantity)
         }
         response = requests.post(url, json=payload, headers=headers, timeout=30)
 
         if response.status_code in (200, 201):
             data = response.json()
-            return {
-                "success": True,
-                "order_id": data.get("order_id") or data.get("id"),
-                "status": data.get("status"),
-                "raw": data
-            }
+            if data.get("ok"):
+                return {
+                    "success": True,
+                    "order": data.get("order"),
+                    "raw": data
+                }
+            return {"success": False, "error": data.get("error", "Order မအောင်မြင်ပါ"), "raw": data}
         else:
-            return {"success": False, "error": f"API Error: {response.status_code} - {response.text[:200]}"}
+            try:
+                err_data = response.json()
+                err_msg = err_data.get("error", f"HTTP {response.status_code}")
+            except Exception:
+                err_msg = f"HTTP {response.status_code}"
+            return {"success": False, "error": err_msg}
     except requests.exceptions.Timeout:
         return {"success": False, "error": "FazerCards API အချိန်ကုန်သွားပါပြီ"}
     except Exception as e:
         return {"success": False, "error": str(e)}
-
+        
       # ==================================================
 # TELEGRAM HELPERS
 # ==================================================
