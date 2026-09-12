@@ -744,7 +744,7 @@ body{{font-family:Arial,sans-serif;background:#000;color:#fff;padding-bottom:80p
 </div>
 </body></html>"""
 
-# ===============# ==================================================
+# ==================================================
 # PLACE ORDER
 # ==================================================
 @app.route("/place_order", methods=["GET", "POST"])
@@ -923,36 +923,6 @@ document.querySelector('form').addEventListener('submit', function(e) {{
         this.submit();
     }}
 }});
-</script>
-</body></html>"""checkBtn.addEventListener('click', async function() {{
-    const pid = document.getElementById('gameIdInput').value.trim();
-    const zid = document.getElementById('serverIdInput').value.trim();
-    const res = document.getElementById('idResult');
-    if (!pid || !zid) {{
-      res.style.display='block';res.className='id-result id-bad';res.innerHTML='⚠️ Player ID နဲ့ Zone ID ဖြည့်ပါ';return;
-    }}
-    checkBtn.disabled = true; checkBtn.innerHTML = '⏳ စစ်ဆေးနေသည်...';
-    try {{
-      const r = await fetch('/api/check-ml-id', {{
-        method: 'POST',
-        headers: {{'Content-Type':'application/json'}},
-        body: JSON.stringify({{player_id: pid, zone_id: zid}})
-      }});
-      const data = await r.json();
-      res.style.display='block';
-      if (data.success) {{
-        res.className='id-result id-ok';
-        res.innerHTML = '✅ Player: <b>' + (data.username || 'Found') + '</b>';
-      }} else {{
-        res.className='id-result id-bad';
-        res.innerHTML = '❌ ' + (data.error || 'မတွေ့ပါ');
-      }}
-    }} catch(e) {{
-      res.style.display='block';res.className='id-result id-bad';res.innerHTML='❌ Network Error';
-    }}
-    checkBtn.disabled = false; checkBtn.innerHTML = '🔍 Check ML ID';
-  }});
-}}
 </script>
 </body></html>"""
 
