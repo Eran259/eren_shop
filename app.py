@@ -343,7 +343,7 @@ def send_telegram_message_with_buttons(text, reply_markup=None):
         print("Telegram Error:", e)
         return False
 
-  def send_message_to_user(username, text):
+def send_message_to_user(username, text):
     try:
         conn = get_db()
         cursor = conn.cursor()
