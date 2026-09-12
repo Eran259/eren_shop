@@ -744,8 +744,8 @@ body{{font-family:Arial,sans-serif;background:#000;color:#fff;padding-bottom:80p
 </div>
 </body></html>"""
 
-# ==================================================
-# PLACE ORDER (ML ID CHECK ပါဝင်သည်)
+# ===============# ==================================================
+# PLACE ORDER
 # ==================================================
 @app.route("/place_order", methods=["GET", "POST"])
 def place_order():
@@ -777,16 +777,12 @@ def place_order():
             message_type = "error"
         else:
             price = product[0]
-            # ===== ML ID CHECK =====
+
+            # ===== ML ID CHECK (WhoPlays ပျက်နေလို့ ဖြုတ်ထားတယ်) =====
             if game == "ML":
                 if not game_id or not server_id:
                     message = "⚠️ ML Player ID နဲ့ Zone ID ထည့်ပါ"
                     message_type = "error"
-                else:
-                    check_result = check_ml_id(game_id, server_id)
-                    if not check_result["success"]:
-                        message = f"❌ ML ID မမှန်ပါ: {check_result['error']}"
-                        message_type = "error"
 
             if message_type != "error":
                 if game == "PUBG" and not game_id:
@@ -876,9 +872,6 @@ body{{background:#0f172a;background-image:none !important;padding-bottom:80px;}}
 .bottom-nav a{{display:flex;flex-direction:column;align-items:center;text-decoration:none;color:#fff;font-size:11px;}}
 .bottom-nav a .icon{{font-size:22px;}}
 .hidden{{display:none;}}
-.id-result{{margin-top:8px;padding:10px;border-radius:8px;font-size:13px;display:none;}}
-.id-ok{{background:#064e3b;color:#4ade80;border:1px solid #22c55e;}}
-.id-bad{{background:#450a0a;color:#f87171;border:1px solid #ef4444;}}
 </style></head><body>
 <div class="header"><a href="javascript:history.back()" class="back-btn">← Back</a><h1>🛒 Place Order</h1></div>
 <div class="box">
@@ -894,7 +887,6 @@ body{{background:#0f172a;background-image:none !important;padding-bottom:80px;}}
 <label style="color:#94a3b8;font-size:13px;display:block;margin-bottom:4px;">Server ID</label>
 <input type="text" id="serverIdInput" name="server_id" placeholder="Enter Server ID" {"required" if "serverIdBox" in req else ""}>
 </div>
-{'<button type="button" id="checkBtn" style="margin-top:10px;background:#1d4ed8;color:#fff;padding:10px;border-radius:8px;border:none;font-weight:bold;cursor:pointer;">🔍 Check ML ID</button><div id="idResult" class="id-result"></div>' if game == 'ML' else ''}
 <div id="telegramBox" class="{tg_hidden}" style="margin-top:12px;">
 <label style="color:#94a3b8;font-size:13px;display:block;margin-bottom:4px;">Telegram Username</label>
 <input type="text" name="telegram_username" placeholder="@username" {"required" if "telegramBox" in req else ""}>
@@ -917,9 +909,22 @@ body{{background:#0f172a;background-image:none !important;padding-bottom:80px;}}
 <a href="/profile"><span class="icon">👤</span>Profile</a>
 </div>
 <script>
-const checkBtn = document.getElementById('checkBtn');
-if (checkBtn) {{
-  checkBtn.addEventListener('click', async function() {{
+document.querySelector('form').addEventListener('submit', function(e) {{
+    e.preventDefault();
+    var gameIdInput = document.querySelector('input[name="game_id"]');
+    var serverIdInput = document.querySelector('input[name="server_id"]');
+    var gameId = gameIdInput ? gameIdInput.value.trim() : '';
+    var serverId = serverIdInput ? serverIdInput.value.trim() : '';
+    var confirmMsg = "⚠️ သေချာမှန်ကန်ပါသလား?\\n\\n";
+    confirmMsg += "🎮 Game ID: " + (gameId || 'မထည့်ထားပါ') + "\\n";
+    confirmMsg += "🌎 Server ID: " + (serverId || 'မထည့်ထားပါ') + "\\n\\n";
+    confirmMsg += "မှားယွင်းပါက ဆုံးရှုံးမှု ရှိနိုင်ပါသည်။ ဆက်လုပ်မလား?";
+    if (confirm(confirmMsg)) {{
+        this.submit();
+    }}
+}});
+</script>
+</body></html>"""checkBtn.addEventListener('click', async function() {{
     const pid = document.getElementById('gameIdInput').value.trim();
     const zid = document.getElementById('serverIdInput').value.trim();
     const res = document.getElementById('idResult');
