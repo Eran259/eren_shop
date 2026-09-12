@@ -246,8 +246,7 @@ a { color: #00e5ff; text-decoration: none; }
 # ==================================================
 def check_ml_id(player_id, zone_id):
     """Temporary Close Check ID"""
-    return {"success": False, "error": "ID Check လောလောဆယ် မရနိုင်ပါ။ ID ကို ကိုယ်တိုင် သေချာစစ်ဆေးပါ။"}
-    
+    return {"success": True, "username": "Unknown"}    
   # ==================================================
 # SMILE ONE API
 # ==================================================
