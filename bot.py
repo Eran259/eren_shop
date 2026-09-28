@@ -1,6 +1,7 @@
 import os
 import re
 import asyncio
+import html
 
 from telegram import Update
 from telegram.ext import (
@@ -18,121 +19,240 @@ from playwright.async_api import async_playwright
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-SMILE_EMAIL = os.getenv("SMILE_EMAIL")
-SMILE_PASSWORD = os.getenv("SMILE_PASSWORD")
+SMILE_PROFILE = "/data/smile-profile"
 
-SMILE_URL = "https://www.smile.one/br/merchant/mobilelegends"
-SMILE_LOGIN_URL = "https://www.smile.one/customer/account/accountlogin"
+SMILE_URL = (
+    "https://www.smile.one/br/merchant/mobilelegends"
+)
+
+SMILE_LOGIN_URL = (
+    "https://www.smile.one/customer/account/accountlogin"
+)
+
+
+# =========================================================
+# GLOBAL BROWSER
+# =========================================================
 
 browser_lock = asyncio.Lock()
 
+_playwright = None
+_browser_context = None
+_page = None
+
 
 # =========================================================
-# BROWSER
+# OPEN / REUSE SMILE BROWSER
 # =========================================================
 
 async def open_browser():
-    pw = await async_playwright().start()
 
-    browser = await pw.chromium.launch(
-        headless=True,
-        args=[
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-        ],
+    global _playwright
+    global _browser_context
+    global _page
+
+    if (
+        _browser_context is not None
+        and _page is not None
+        and not _page.is_closed()
+    ):
+        return _playwright, _browser_context, _page
+
+    os.makedirs(SMILE_PROFILE, exist_ok=True)
+
+    _playwright = await async_playwright().start()
+
+    _browser_context = (
+        await _playwright.chromium.launch_persistent_context(
+            user_data_dir=SMILE_PROFILE,
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-setuid-sandbox",
+            ],
+            viewport={
+                "width": 1366,
+                "height": 900,
+            },
+            locale="pt-BR",
+        )
     )
 
-    browser_context = await browser.new_context(
-        viewport={
-            "width": 1366,
-            "height": 900,
-        },
-        locale="pt-BR",
-    )
+    if _browser_context.pages:
+        _page = _browser_context.pages[0]
+    else:
+        _page = await _browser_context.new_page()
 
-    page = await browser_context.new_page()
-
-    return pw, browser, browser_context, page
+    return _playwright, _browser_context, _page
 
 
 # =========================================================
-# START
+# CLOSE BROWSER
 # =========================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def close_browser():
 
-    await update.message.reply_text(
-        "🤖 Eren ML Dia Bot\n\n"
-        "✅ Bot is online!\n"
-        "🌐 Smile One Browser System\n\n"
-        "💎 Commands\n"
+    global _playwright
+    global _browser_context
+    global _page
+
+    try:
+        if _browser_context:
+            await _browser_context.close()
+    except Exception:
+        pass
+
+    try:
+        if _playwright:
+            await _playwright.stop()
+    except Exception:
+        pass
+
+    _playwright = None
+    _browser_context = None
+    _page = None
+
+
+# =========================================================
+# SAFE PAGE TEXT
+# =========================================================
+
+async def get_page_text(page):
+
+    try:
+        text = await page.locator("body").inner_text(
+            timeout=10000
+        )
+
+        return text.strip()
+
+    except Exception:
+        return ""
+
+
+# =========================================================
+# LOGIN CHECK
+# =========================================================
+
+async def is_login_page(page):
+
+    try:
+        url = page.url.lower()
+
+        if "account/accountlogin" in url:
+            return True
+
+        text = (
+            await get_page_text(page)
+        ).lower()
+
+        login_words = [
+            "sign in with google",
+            "log in with email",
+            "sign in",
+            "login",
+        ]
+
+        found = 0
+
+        for word in login_words:
+            if word in text:
+                found += 1
+
+        if found >= 2:
+            return True
+
+        return False
+
+    except Exception:
+        return False
+
+
+# =========================================================
+# /START
+# =========================================================
+
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    text = (
+        "🤖 <b>Eren ML Dia Bot</b>\n\n"
+        "💎 Mobile Legends Diamond Bot\n\n"
+        "📦 /product\n"
+        "🪙 /balance\n"
+        "🔍 /checkid ID SERVER\n"
+        "🔐 /login\n"
+        "🧪 /test\n\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "/product - MLBB Products\n"
-        "/balance - Smile Coin Balance\n"
-        "/checkid ID SERVER - Check Player\n"
-        "/test - Browser Test"
+        "⚡ Smile One Browser System"
     )
-
-
-# =========================================================
-# TEST
-# =========================================================
-
-async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "🌐 Opening Smile One..."
+        text,
+        parse_mode="HTML"
     )
 
-    async with browser_lock:
 
-        pw = None
-        browser = None
+# =========================================================
+# /TEST
+# =========================================================
 
-        try:
-            pw, browser, browser_context, page = (
+async def test(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    msg = await update.message.reply_text(
+        "🌐 Smile One ကိုဖွင့်နေပါတယ်..."
+    )
+
+    try:
+
+        async with browser_lock:
+
+            pw, browser_context, page = (
                 await open_browser()
             )
 
             await page.goto(
-                "https://www.smile.one/",
+                SMILE_URL,
                 wait_until="domcontentloaded",
-                timeout=60000,
+                timeout=60000
             )
 
             await page.wait_for_timeout(3000)
 
             title = await page.title()
 
-            await browser.close()
-            await pw.stop()
+            url = page.url
 
-            await update.message.reply_text(
-                "✅ Browser works!\n\n"
-                "🌐 Smile One\n"
-                f"📄 Title: {title}"
-            )
+        text = (
+            "✅ <b>Browser works!</b>\n\n"
+            "🌐 Smile One\n"
+            f"📄 Title: <code>{html.escape(title)}</code>\n"
+            f"🔗 URL: <code>{html.escape(url)}</code>"
+        )
 
-        except Exception as e:
+        await msg.edit_text(
+            text,
+            parse_mode="HTML"
+        )
 
-            try:
-                if browser:
-                    await browser.close()
+    except Exception as e:
 
-                if pw:
-                    await pw.stop()
-            except Exception:
-                pass
-
-            await update.message.reply_text(
-                "❌ Browser Error\n\n"
-                + str(e)[:3000]
-            )
+        await msg.edit_text(
+            "❌ <b>Browser Error</b>\n\n"
+            f"<code>{html.escape(str(e)[:1500])}</code>",
+            parse_mode="HTML"
+        )
 
 
 # =========================================================
-# SELECT SMILE COIN
+# SMILE COIN PAYMENT SELECTOR
 # =========================================================
 
 async def select_smile_coin(page):
@@ -146,60 +266,59 @@ async def select_smile_coin(page):
     for selector in selectors:
 
         try:
-            loc = page.locator(selector)
 
-            count = await loc.count()
+            locator = page.locator(selector).first
 
-            for i in range(count):
+            if await locator.count() > 0:
 
-                item = loc.nth(i)
+                await locator.click(
+                    timeout=5000
+                )
 
-                try:
-                    if await item.is_visible():
+                await page.wait_for_timeout(1000)
 
-                        await item.click(
-                            timeout=5000
-                        )
-
-                        await page.wait_for_timeout(
-                            2500
-                        )
-
-                        return True
-
-                except Exception:
-                    continue
+                return True
 
         except Exception:
-            continue
+            pass
 
+    # Search text manually
     try:
-        labels = page.locator("label")
 
-        count = await labels.count()
+        elements = page.locator(
+            "label, div, span"
+        )
 
-        for i in range(count):
+        count = await elements.count()
 
-            label = labels.nth(i)
+        for i in range(
+            min(count, 500)
+        ):
 
             try:
 
-                txt = (
-                    await label.inner_text()
-                ).strip().lower()
+                el = elements.nth(i)
+
+                text = (
+                    await el.inner_text(
+                        timeout=1000
+                    )
+                ).strip()
+
+                lower = text.lower()
 
                 if (
-                    "moeda smile" in txt
-                    or "smilecoin" in txt
-                    or "smile coin" in txt
+                    "moeda smile" in lower
+                    or "smilecoin" in lower
+                    or "smile coin" in lower
                 ):
 
-                    await label.click(
-                        timeout=5000
+                    await el.click(
+                        timeout=3000
                     )
 
                     await page.wait_for_timeout(
-                        2500
+                        1000
                     )
 
                     return True
@@ -214,30 +333,42 @@ async def select_smile_coin(page):
 
 
 # =========================================================
-# EXTRACT PRODUCTS
+# EXTRACT SMILE COIN PRODUCTS
 # =========================================================
 
 async def extract_products(page):
 
-    body = await page.locator(
-        "body"
-    ).inner_text()
+    text = await get_page_text(page)
+
+    if not text:
+        return []
 
     lines = [
-        line.strip()
-        for line in body.splitlines()
-        if line.strip()
+        x.strip()
+        for x in text.splitlines()
+        if x.strip()
     ]
 
     products = []
 
     diamond_pattern = re.compile(
-        r"(\d[\d,]*)\s*"
-        r"(?:\+\s*(\d[\d,]*))?"
-        r"\s*"
-        r"(?:Diamond|Diamonds)",
-        re.IGNORECASE,
+        r"(\d[\d,.]*)\s*(?:\+\s*(\d[\d,.]*))?\s*"
+        r"(?:diamonds?|diamantes?)",
+        re.IGNORECASE
     )
+
+    coin_patterns = [
+        re.compile(
+            r"(\d[\d.,]*)\s*"
+            r"(?:smile\s*coin|smilecoin|moeda\s*smile)",
+            re.IGNORECASE
+        ),
+        re.compile(
+            r"(?:smile\s*coin|smilecoin|moeda\s*smile)"
+            r"\s*[:\-]?\s*(\d[\d.,]*)",
+            re.IGNORECASE
+        ),
+    ]
 
     for index, line in enumerate(lines):
 
@@ -246,125 +377,56 @@ async def extract_products(page):
         if not match:
             continue
 
-        base = match.group(1).replace(
-            ",", ""
-        )
+        base = match.group(1)
 
         bonus = match.group(2)
 
-        diamond = base
-
         if bonus:
-            diamond += "+" + bonus
-
-        nearby = lines[
-            max(0, index - 5):
-            min(len(lines), index + 6)
-        ]
-
-        joined = " | ".join(nearby)
+            diamond_name = (
+                f"{base}+{bonus} Diamonds"
+            )
+        else:
+            diamond_name = (
+                f"{base} Diamonds"
+            )
 
         coin = None
 
-        coin_patterns = [
-            r"SmileCoin\s*[:\-]?\s*([\d,]+)",
-            r"Smile\s*Coin\s*[:\-]?\s*([\d,]+)",
-            r"([\d,]+)\s*SmileCoin",
-            r"([\d,]+)\s*Smile\s*Coin",
+        nearby = lines[
+            max(0, index - 2):
+            min(len(lines), index + 5)
         ]
+
+        nearby_text = " ".join(nearby)
 
         for pattern in coin_patterns:
 
-            m = re.search(
-                pattern,
-                joined,
-                re.IGNORECASE,
+            coin_match = pattern.search(
+                nearby_text
             )
 
-            if m:
+            if coin_match:
 
-                coin = (
-                    m.group(1)
-                    .replace(",", "")
-                )
+                coin = coin_match.group(1)
 
                 break
 
-        if coin is None:
+        products.append(
+            {
+                "name": diamond_name,
+                "coin": coin,
+            }
+        )
 
-            try:
-
-                diamond_loc = page.get_by_text(
-                    re.compile(
-                        re.escape(diamond),
-                        re.IGNORECASE,
-                    )
-                ).first
-
-                if await diamond_loc.count() > 0:
-
-                    element = diamond_loc
-
-                    for _ in range(6):
-
-                        try:
-
-                            element = (
-                                element.locator(
-                                    ".."
-                                )
-                            )
-
-                            txt = (
-                                await element.inner_text()
-                            )
-
-                            dom_patterns = [
-                                r"([\d,]+)\s*Smile\s*Coin",
-                                r"Smile\s*Coin\s*[:\-]?\s*([\d,]+)",
-                                r"([\d,]+)\s*SmileCoin",
-                                r"SmileCoin\s*[:\-]?\s*([\d,]+)",
-                            ]
-
-                            for pattern in dom_patterns:
-
-                                m = re.search(
-                                    pattern,
-                                    txt,
-                                    re.IGNORECASE,
-                                )
-
-                                if m:
-
-                                    coin = (
-                                        m.group(1)
-                                        .replace(",", "")
-                                    )
-
-                                    break
-
-                            if coin:
-                                break
-
-                        except Exception:
-                            break
-
-            except Exception:
-                pass
-
-        products.append({
-            "diamond": diamond,
-            "coin": coin,
-        })
-
+    # remove duplicates
     unique = []
     seen = set()
 
     for item in products:
 
         key = (
-            item["diamond"],
-            item["coin"],
+            item["name"],
+            item["coin"]
         )
 
         if key in seen:
@@ -377,7 +439,7 @@ async def extract_products(page):
 
 
 # =========================================================
-# PRODUCT
+# /PRODUCT
 # =========================================================
 
 async def product(
@@ -385,47 +447,53 @@ async def product(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    await update.message.reply_text(
-        "🔄 Smile One MLBB Products ဖတ်နေပါတယ်...\n\n"
-        "🪙 Smile Coin payment ကိုရွေးပြီး\n"
-        "live coin amount ကိုစစ်နေပါတယ်..."
+    msg = await update.message.reply_text(
+        "💎 <b>MLBB Products</b>\n\n"
+        "🌐 Smile One ကိုဖွင့်နေပါတယ်...",
+        parse_mode="HTML"
     )
 
-    async with browser_lock:
+    try:
 
-        pw = None
-        browser = None
+        async with browser_lock:
 
-        try:
-
-            pw, browser, browser_context, page = (
+            pw, browser_context, page = (
                 await open_browser()
             )
 
             await page.goto(
                 SMILE_URL,
                 wait_until="domcontentloaded",
-                timeout=60000,
+                timeout=60000
             )
 
-            await page.wait_for_timeout(
-                3500
+            await page.wait_for_timeout(3000)
+
+            if await is_login_page(page):
+
+                await msg.edit_text(
+                    "🔐 <b>Smile One Login လိုအပ်ပါတယ်</b>\n\n"
+                    "Google နဲ့ Smile One ထဲဝင်ပြီးမှ\n"
+                    "/product ကို ပြန်သုံးပါ။\n\n"
+                    "📌 Login page ဖွင့်ရန်\n"
+                    "/login",
+                    parse_mode="HTML"
+                )
+
+                return
+
+            selected = await select_smile_coin(
+                page
             )
 
-            smile_clicked = (
-                await select_smile_coin(page)
-            )
+            if not selected:
 
-            if not smile_clicked:
-
-                await browser.close()
-                await pw.stop()
-
-                await update.message.reply_text(
-                    "❌ Smile Coin payment option "
-                    "ကိုမရွေးနိုင်သေးပါဘူး။\n\n"
+                await msg.edit_text(
+                    "❌ <b>Smile Coin payment option "
+                    "ကို မရွေးနိုင်သေးပါဘူး။</b>\n\n"
                     "R$ price ကို မပြပါဘူး။\n"
-                    "Coin amount မှန်မှန်ရမှပဲ ပြပါမယ်။"
+                    "Coin amount မှန်မှန်ရမှပဲ ပြပါမယ်။",
+                    parse_mode="HTML"
                 )
 
                 return
@@ -434,72 +502,113 @@ async def product(
                 page
             )
 
-            await browser.close()
-            await pw.stop()
+        if not products:
 
-            if not products:
+            await msg.edit_text(
+                "⚠️ <b>Product data မတွေ့သေးပါဘူး</b>\n\n"
+                "Smile One page ရဲ့ layout ကို "
+                "ထပ်စစ်ဖို့လိုပါတယ်။",
+                parse_mode="HTML"
+            )
 
-                await update.message.reply_text(
-                    "❌ MLBB products မတွေ့ပါဘူး။"
+            return
+
+        lines = [
+            "💎 <b>MLBB DIAMOND PRODUCTS</b>",
+            "━━━━━━━━━━━━━━━━━━",
+            ""
+        ]
+
+        for item in products[:30]:
+
+            coin = item["coin"]
+
+            if coin:
+                coin_text = (
+                    f"🪙 Smile Coin: <b>{coin}</b>"
+                )
+            else:
+                coin_text = (
+                    "🪙 Smile Coin: ⚠️ Not detected"
                 )
 
-                return
-
-            text = (
-                "💎 MLBB DIAMOND PRODUCTS\n"
-                "━━━━━━━━━━━━━━━━━━\n\n"
+            lines.append(
+                f"💎 <b>{html.escape(item['name'])}</b>"
             )
 
-            for item in products:
-
-                text += (
-                    f"💎 {item['diamond']} Diamonds\n"
-                )
-
-                if item["coin"]:
-
-                    text += (
-                        f"🪙 Smile Coin: "
-                        f"{item['coin']}\n\n"
-                    )
-
-                else:
-
-                    text += (
-                        "🪙 Smile Coin: "
-                        "⚠️ Not detected\n\n"
-                    )
-
-            text += (
-                "━━━━━━━━━━━━━━━━━━\n"
-                "🌐 Smile One Brazil"
+            lines.append(
+                coin_text
             )
 
-            if len(text) > 4000:
-                text = text[:3950] + "\n..."
+            lines.append("")
 
-            await update.message.reply_text(
-                text
-            )
+        await msg.edit_text(
+            "\n".join(lines),
+            parse_mode="HTML"
+        )
 
-        except Exception as e:
+    except Exception as e:
 
-            try:
-                if browser:
-                    await browser.close()
-
-                if pw:
-                    await pw.stop()
-            except Exception:
-                pass
-
-            await update.message.reply_text(
-                "❌ Product Error\n\n"
-                + str(e)[:3000]
-    )
+        await msg.edit_text(
+            "❌ <b>Product Error</b>\n\n"
+            f"<code>{html.escape(str(e)[:1500])}</code>",
+            parse_mode="HTML"
+)
 
 # =========================================================
-# BALANCE
+# /LOGIN
+# =========================================================
+
+async def login(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    msg = await update.message.reply_text(
+        "🔐 <b>Smile One Login</b>\n\n"
+        "🌐 Login page ကိုဖွင့်နေပါတယ်...",
+        parse_mode="HTML"
+    )
+
+    try:
+
+        async with browser_lock:
+
+            pw, browser_context, page = (
+                await open_browser()
+            )
+
+            await page.goto(
+                SMILE_LOGIN_URL,
+                wait_until="domcontentloaded",
+                timeout=60000
+            )
+
+            await page.wait_for_timeout(3000)
+
+        await msg.edit_text(
+            "🔐 <b>Smile One Login Page ဖွင့်ပြီးပါပြီ</b>\n\n"
+            "Google နဲ့ Smile One ကို Login ဝင်ပေးပါ။\n\n"
+            "⚠️ ဒီ bot က Google password / OTP ကို "
+            "မတောင်းပါဘူး။\n\n"
+            "Login ပြီးသွားရင်\n"
+            "👉 /balance\n"
+            "👉 /product\n"
+            "ကို ပြန်စမ်းပါ။",
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+
+        await msg.edit_text(
+            "❌ <b>Login Page Error</b>\n\n"
+            f"<code>{html.escape(str(e)[:1500])}</code>",
+            parse_mode="HTML"
+        )
+
+
+# =========================================================
+# /BALANCE
 # =========================================================
 
 async def balance(
@@ -507,239 +616,266 @@ async def balance(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    if not SMILE_EMAIL or not SMILE_PASSWORD:
-
-        await update.message.reply_text(
-            "❌ Smile One Login မသတ်မှတ်ထားပါဘူး။\n\n"
-            "Railway Variables မှာ\n"
-            "SMILE_EMAIL\n"
-            "SMILE_PASSWORD\n"
-            "ထည့်ထားရပါမယ်။"
-        )
-
-        return
-
-    await update.message.reply_text(
-        "🔄 Smile One Login စစ်နေပါတယ်..."
+    msg = await update.message.reply_text(
+        "🪙 <b>Smile Coin Balance</b>\n\n"
+        "🔍 စစ်ဆေးနေပါတယ်...",
+        parse_mode="HTML"
     )
 
-    async with browser_lock:
+    try:
 
-        pw = None
-        browser = None
+        async with browser_lock:
 
-        try:
-
-            pw, browser, browser_context, page = (
+            pw, browser_context, page = (
                 await open_browser()
             )
 
             await page.goto(
-                SMILE_LOGIN_URL,
+                SMILE_URL,
                 wait_until="domcontentloaded",
-                timeout=60000,
+                timeout=60000
             )
 
             await page.wait_for_timeout(3000)
 
-            # ---------------------------------------------
-            # EMAIL
-            # ---------------------------------------------
+            if await is_login_page(page):
 
-            email_input = page.locator(
-                'input[placeholder="Email"]'
-            ).first
-
-            password_input = page.locator(
-                'input[placeholder="Senha"]'
-            ).first
-
-            # Fallback
-            if await email_input.count() == 0:
-
-                inputs = page.locator("input")
-
-                count = await inputs.count()
-
-                if count >= 2:
-
-                    email_input = inputs.nth(0)
-                    password_input = inputs.nth(1)
-
-                else:
-
-                    raise Exception(
-                        "Login input fields မတွေ့ပါဘူး"
-                    )
-
-            await email_input.fill(
-                SMILE_EMAIL
-            )
-
-            await password_input.fill(
-                SMILE_PASSWORD
-            )
-
-            # ---------------------------------------------
-            # LOGIN BUTTON
-            # ---------------------------------------------
-
-            clicked = False
-
-            buttons = page.locator("button")
-
-            button_count = await buttons.count()
-
-            for i in range(button_count):
-
-                btn = buttons.nth(i)
-
-                try:
-
-                    txt = (
-                        await btn.inner_text()
-                    ).strip().lower()
-
-                    if (
-                        "entrar" in txt
-                        or "login" in txt
-                        or "sign in" in txt
-                    ):
-
-                        await btn.click(
-                            timeout=5000
-                        )
-
-                        clicked = True
-                        break
-
-                except Exception:
-                    continue
-
-            if not clicked:
-
-                await password_input.press(
-                    "Enter"
+                await msg.edit_text(
+                    "🔐 <b>Smile One Login မဝင်ရသေးပါဘူး</b>\n\n"
+                    "Google နဲ့ Login ဝင်ပြီးမှ\n"
+                    "/balance ကို ပြန်သုံးပါ။\n\n"
+                    "📌 /login",
+                    parse_mode="HTML"
                 )
 
-            await page.wait_for_timeout(
-                6000
-            )
+                return
 
-            body = await page.locator(
-                "body"
-            ).inner_text()
+            text = await get_page_text(page)
 
-            lower_body = body.lower()
+        # -------------------------------------------------
+        # Smile Coin keywords
+        # -------------------------------------------------
 
-            # ---------------------------------------------
-            # LOGIN ERROR CHECK
-            # ---------------------------------------------
+        lines = [
+            x.strip()
+            for x in text.splitlines()
+            if x.strip()
+        ]
 
-            login_errors = [
-                "senha incorreta",
-                "email ou senha",
-                "invalid password",
-                "incorrect password",
-                "wrong password",
-                "login failed",
-            ]
+        balance_value = None
 
-            for error_text in login_errors:
+        patterns = [
+            re.compile(
+                r"(?:smile\s*coin|smilecoin|moeda\s*smile)"
+                r"\s*[:\-]?\s*"
+                r"([\d.,]+)",
+                re.IGNORECASE
+            ),
 
-                if error_text in lower_body:
+            re.compile(
+                r"([\d.,]+)\s*"
+                r"(?:smile\s*coin|smilecoin|moeda\s*smile)",
+                re.IGNORECASE
+            ),
+        ]
 
-                    await browser.close()
-                    await pw.stop()
+        for line in lines:
 
-                    await update.message.reply_text(
-                        "❌ Smile One Login Failed\n\n"
-                        "Email / Password မှားနေပါတယ်။"
-                    )
+            for pattern in patterns:
 
-                    return
+                match = pattern.search(line)
 
-            # ---------------------------------------------
-            # FIND SMILE COIN BALANCE
-            # ---------------------------------------------
+                if match:
 
-            lines = [
-                line.strip()
-                for line in body.splitlines()
-                if line.strip()
-            ]
+                    balance_value = match.group(1)
 
-            balance_lines = []
+                    break
 
-            for line in lines:
+            if balance_value:
+                break
 
-                low = line.lower()
+        # -------------------------------------------------
+        # Try DOM elements if body text didn't work
+        # -------------------------------------------------
 
-                if (
-                    "smilecoin" in low
-                    or "smile coin" in low
-                    or "moeda smile" in low
-                ):
-
-                    balance_lines.append(
-                        line
-                    )
-
-            await browser.close()
-            await pw.stop()
-
-            if balance_lines:
-
-                result = (
-                    "🪙 SMILE COIN BALANCE\n"
-                    "━━━━━━━━━━━━━━━━━━\n\n"
-                )
-
-                for line in balance_lines[:10]:
-
-                    result += (
-                        f"💰 {line}\n"
-                    )
-
-                result += (
-                    "\n━━━━━━━━━━━━━━━━━━"
-                )
-
-                await update.message.reply_text(
-                    result
-                )
-
-            else:
-
-                await update.message.reply_text(
-                    "⚠️ Login ဝင်ပြီးပါပြီ။\n\n"
-                    "🪙 Smile Coin Balance ကို "
-                    "page ထဲမှာ မတွေ့သေးပါဘူး။\n\n"
-                    "Balance page structure ကို "
-                    "ထပ်စစ်ဖို့လိုပါတယ်။"
-                )
-
-        except Exception as e:
+        if not balance_value:
 
             try:
 
-                if browser:
-                    await browser.close()
+                elements = page.locator(
+                    "span, div, p, a"
+                )
 
-                if pw:
-                    await pw.stop()
+                count = await elements.count()
+
+                for i in range(
+                    min(count, 1000)
+                ):
+
+                    try:
+
+                        el = elements.nth(i)
+
+                        value = (
+                            await el.inner_text(
+                                timeout=500
+                            )
+                        ).strip()
+
+                        if not value:
+                            continue
+
+                        lower = value.lower()
+
+                        if not (
+                            "smile coin" in lower
+                            or "smilecoin" in lower
+                            or "moeda smile" in lower
+                        ):
+                            continue
+
+                        for pattern in patterns:
+
+                            match = pattern.search(
+                                value
+                            )
+
+                            if match:
+
+                                balance_value = (
+                                    match.group(1)
+                                )
+
+                                break
+
+                        if balance_value:
+                            break
+
+                    except Exception:
+                        continue
 
             except Exception:
                 pass
 
-            await update.message.reply_text(
-                "❌ Balance Error\n\n"
-                + str(e)[:3000]
+        if balance_value:
+
+            await msg.edit_text(
+                "🪙 <b>Smile Coin Balance</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                f"💰 Balance: <b>{html.escape(balance_value)}</b>\n\n"
+                "✅ Smile One session active",
+                parse_mode="HTML"
             )
+
+        else:
+
+            await msg.edit_text(
+                "⚠️ <b>Smile Coin Balance မတွေ့သေးပါဘူး</b>\n\n"
+                "Login session ရှိနေပါတယ်။\n"
+                "ဒါပေမယ့် page ထဲက Coin balance ကို "
+                "မဖတ်နိုင်သေးပါဘူး။\n\n"
+                "📌 Smile One account page layout ကို "
+                "ထပ်စစ်ဖို့လိုနိုင်ပါတယ်။",
+                parse_mode="HTML"
+            )
+
+    except Exception as e:
+
+        await msg.edit_text(
+            "❌ <b>Balance Error</b>\n\n"
+            f"<code>{html.escape(str(e)[:1500])}</code>",
+            parse_mode="HTML"
+        )
 
 
 # =========================================================
-# CHECK PLAYER ID
+# PLAYER NICKNAME FINDER
+# =========================================================
+
+async def find_player_nickname(page):
+
+    selectors = [
+        '[class*="nickname"]',
+        '[class*="NickName"]',
+        '[class*="player-name"]',
+        '[class*="playerName"]',
+        '[class*="role-name"]',
+        '[class*="roleName"]',
+        '[class*="user-name"]',
+        '[class*="userName"]',
+    ]
+
+    bad_words = [
+        "mobile legends",
+        "mobile legend",
+        "moonton",
+        "diamond",
+        "diamonds",
+        "smile one",
+        "smilecoin",
+        "smile coin",
+        "server",
+        "player",
+        "online battle arena",
+        "moba",
+    ]
+
+    for selector in selectors:
+
+        try:
+
+            elements = page.locator(
+                selector
+            )
+
+            count = await elements.count()
+
+            for i in range(
+                min(count, 50)
+            ):
+
+                try:
+
+                    value = (
+                        await elements.nth(i).inner_text(
+                            timeout=1000
+                        )
+                    ).strip()
+
+                    if not value:
+                        continue
+
+                    if len(value) > 80:
+                        continue
+
+                    lower = value.lower()
+
+                    if any(
+                        word in lower
+                        for word in bad_words
+                    ):
+                        continue
+
+                    # avoid pure numbers
+                    if re.fullmatch(
+                        r"[\d\s.,+-]+",
+                        value
+                    ):
+                        continue
+
+                    return value
+
+                except Exception:
+                    continue
+
+        except Exception:
+            continue
+
+    return None
+
+
+# =========================================================
+# /CHECKID
 # =========================================================
 
 async def checkid(
@@ -747,261 +883,272 @@ async def checkid(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    if len(context.args) < 2:
+    args = context.args
+
+    if len(args) < 2:
 
         await update.message.reply_text(
-            "❌ Usage:\n\n"
-            "/checkid GAME_ID SERVER_ID\n\n"
-            "Example:\n"
-            "/checkid 1662307694 18012"
+            "❌ <b>Format မှားနေပါတယ်</b>\n\n"
+            "အသုံးပြုပုံ:\n"
+            "<code>/checkid GAME_ID SERVER_ID</code>\n\n"
+            "ဥပမာ:\n"
+            "<code>/checkid 1662307694 18012</code>",
+            parse_mode="HTML"
         )
 
         return
 
-    game_id = context.args[0]
-    server_id = context.args[1]
+    game_id = args[0]
+    server_id = args[1]
 
-    await update.message.reply_text(
-        "🔍 Player ID စစ်နေပါတယ်...\n\n"
-        f"🆔 ID: {game_id}\n"
-        f"🌐 Server: {server_id}"
+    msg = await update.message.reply_text(
+        "🔍 <b>Checking Mobile Legends ID...</b>\n\n"
+        f"🆔 ID: <code>{html.escape(game_id)}</code>\n"
+        f"🌐 Server: <code>{html.escape(server_id)}</code>",
+        parse_mode="HTML"
     )
 
-    async with browser_lock:
+    try:
 
-        pw = None
-        browser = None
+        async with browser_lock:
 
-        try:
-
-            pw, browser, browser_context, page = (
+            pw, browser_context, page = (
                 await open_browser()
             )
 
             await page.goto(
                 SMILE_URL,
                 wait_until="domcontentloaded",
-                timeout=60000,
+                timeout=60000
             )
 
-            await page.wait_for_timeout(
-                3000
-            )
+            await page.wait_for_timeout(3000)
 
-            # ---------------------------------------------
-            # FIND INPUTS
-            # ---------------------------------------------
+            if await is_login_page(page):
 
-            inputs = page.locator("input")
-
-            input_count = await inputs.count()
-
-            if input_count < 2:
-
-                await browser.close()
-                await pw.stop()
-
-                await update.message.reply_text(
-                    "⚠️ Game ID / Server ID input "
-                    "မတွေ့ပါဘူး။"
+                await msg.edit_text(
+                    "🔐 <b>Smile One Login လိုအပ်ပါတယ်</b>\n\n"
+                    "Google နဲ့ Login ဝင်ပြီးမှ "
+                    "/checkid ကို ပြန်သုံးပါ။",
+                    parse_mode="HTML"
                 )
 
                 return
 
-            game_input = None
-            server_input = None
+            # -------------------------------------------------
+            # Fill Game ID
+            # -------------------------------------------------
 
-            # Search by placeholder/name first
-            for i in range(input_count):
+            filled_id = False
 
-                inp = inputs.nth(i)
-
-                try:
-
-                    placeholder = (
-                        await inp.get_attribute(
-                            "placeholder"
-                        )
-                        or ""
-                    )
-
-                    name = (
-                        await inp.get_attribute(
-                            "name"
-                        )
-                        or ""
-                    )
-
-                    text = (
-                        placeholder + " " + name
-                    ).lower()
-
-                    if (
-                        "user" in text
-                        or "uid" in text
-                        or "id" in text
-                    ):
-
-                        if game_input is None:
-                            game_input = inp
-
-                    if (
-                        "server" in text
-                        or "zone" in text
-                    ):
-
-                        if server_input is None:
-                            server_input = inp
-
-                except Exception:
-                    continue
-
-            # Fallback
-            if game_input is None:
-                game_input = inputs.nth(0)
-
-            if server_input is None:
-
-                if input_count >= 2:
-                    server_input = inputs.nth(1)
-
-            await game_input.fill(
-                game_id
-            )
-
-            await server_input.fill(
-                server_id
-            )
-
-            await page.wait_for_timeout(
-                1000
-            )
-
-            # Trigger validation
-            try:
-                await server_input.press(
-                    "Tab"
-                )
-            except Exception:
-                pass
-
-            await page.wait_for_timeout(
-                5000
-            )
-
-            # ---------------------------------------------
-            # FIND PLAYER/NICKNAME
-            # ---------------------------------------------
-
-            selectors = [
-                '[class*="nickname"]',
-                '[class*="NickName"]',
-                '[class*="player-name"]',
-                '[class*="playerName"]',
-                '[class*="role-name"]',
-                '[class*="roleName"]',
-                '[class*="user-name"]',
-                '[class*="userName"]',
+            id_selectors = [
+                'input[name="uid"]',
+                'input[name="user_id"]',
+                'input[name="userid"]',
+                'input[name="game_id"]',
+                'input[placeholder*="ID"]',
+                'input[placeholder*="id"]',
             ]
 
-            nickname = None
-
-            for selector in selectors:
+            for selector in id_selectors:
 
                 try:
 
                     loc = page.locator(
                         selector
-                    )
+                    ).first
 
-                    count = await loc.count()
+                    if await loc.count() > 0:
 
-                    for i in range(count):
+                        await loc.fill(
+                            game_id,
+                            timeout=3000
+                        )
 
-                        item = loc.nth(i)
-
-                        if not await item.is_visible():
-                            continue
-
-                        txt = (
-                            await item.inner_text()
-                        ).strip()
-
-                        if not txt:
-                            continue
-
-                        if len(txt) > 100:
-                            continue
-
-                        low = txt.lower()
-
-                        # Don't accept generic page text
-                        blocked = [
-                            "mobile legends",
-                            "online battle arena",
-                            "moonton",
-                            "diamond",
-                            "smile one",
-                            "server",
-                            "player",
-                        ]
-
-                        if any(
-                            word in low
-                            for word in blocked
-                        ):
-                            continue
-
-                        nickname = txt
-                        break
-
-                    if nickname:
+                        filled_id = True
                         break
 
                 except Exception:
                     continue
 
-            await browser.close()
-            await pw.stop()
+            # -------------------------------------------------
+            # Fill Server ID
+            # -------------------------------------------------
 
-            if nickname:
+            filled_server = False
 
-                await update.message.reply_text(
-                    "✅ PLAYER FOUND\n"
-                    "━━━━━━━━━━━━━━━━━━\n\n"
-                    f"👤 Player: {nickname}\n"
-                    f"🆔 ID: {game_id}\n"
-                    f"🌐 Server: {server_id}\n\n"
-                    "━━━━━━━━━━━━━━━━━━"
-                )
+            server_selectors = [
+                'input[name="server"]',
+                'input[name="server_id"]',
+                'input[name="zone"]',
+                'input[name="zone_id"]',
+                'input[placeholder*="Server"]',
+                'input[placeholder*="server"]',
+            ]
 
-            else:
+            for selector in server_selectors:
 
-                await update.message.reply_text(
-                    "⚠️ Player result မရသေးပါဘူး\n\n"
-                    f"🆔 ID: {game_id}\n"
-                    f"🌐 Server: {server_id}\n\n"
-                    "Smile One က verification result "
-                    "ကို မပြသေးတာ ဖြစ်နိုင်ပါတယ်။"
-                )
+                try:
 
-        except Exception as e:
+                    loc = page.locator(
+                        selector
+                    ).first
 
-            try:
+                    if await loc.count() > 0:
 
-                if browser:
-                    await browser.close()
+                        await loc.fill(
+                            server_id,
+                            timeout=3000
+                        )
 
-                if pw:
-                    await pw.stop()
+                        filled_server = True
+                        break
 
-            except Exception:
-                pass
+                except Exception:
+                    continue
 
-            await update.message.reply_text(
-                "❌ Check ID Error\n\n"
-                + str(e)[:3000]
+            # -------------------------------------------------
+            # Try buttons related to verification
+            # -------------------------------------------------
+
+            clicked = False
+
+            buttons = page.locator(
+                "button, a"
             )
+
+            count = await buttons.count()
+
+            for i in range(
+                min(count, 300)
+            ):
+
+                try:
+
+                    button = buttons.nth(i)
+
+                    text = (
+                        await button.inner_text(
+                            timeout=500
+                        )
+                    ).strip()
+
+                    lower = text.lower()
+
+                    if any(
+                        key in lower
+                        for key in [
+                            "check",
+                            "verify",
+                            "confirm",
+                            "search",
+                            "ตรวจ",
+                            "verificar",
+                            "consultar",
+                        ]
+                    ):
+
+                        await button.click(
+                            timeout=3000
+                        )
+
+                        clicked = True
+
+                        await page.wait_for_timeout(
+                            2500
+                        )
+
+                        break
+
+                except Exception:
+                    continue
+
+            # -------------------------------------------------
+            # Find actual nickname
+            # -------------------------------------------------
+
+            nickname = (
+                await find_player_nickname(
+                    page
+                )
+            )
+
+        # -----------------------------------------------------
+        # Result
+        # -----------------------------------------------------
+
+        if nickname:
+
+            await msg.edit_text(
+                "✅ <b>PLAYER FOUND</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n\n"
+                f"👤 Player: <b>{html.escape(nickname)}</b>\n"
+                f"🆔 ID: <code>{html.escape(game_id)}</code>\n"
+                f"🌐 Server: <code>{html.escape(server_id)}</code>\n\n"
+                "✅ ID verification result found.",
+                parse_mode="HTML"
+            )
+
+        else:
+
+            status = []
+
+            if filled_id:
+                status.append("🆔 Game ID entered")
+
+            if filled_server:
+                status.append("🌐 Server ID entered")
+
+            if clicked:
+                status.append("🔍 Verification attempted")
+
+            status_text = "\n".join(status)
+
+            if not status_text:
+                status_text = (
+                    "⚠️ ID input field ကို "
+                    "မတွေ့သေးပါဘူး။"
+                )
+
+            await msg.edit_text(
+                "⚠️ <b>Player result မရသေးပါဘူး</b>\n\n"
+                f"🆔 ID: <code>{html.escape(game_id)}</code>\n"
+                f"🌐 Server: <code>{html.escape(server_id)}</code>\n\n"
+                f"{status_text}\n\n"
+                "📌 ဒီ result က ID invalid လို့ "
+                "ဆိုလိုတာမဟုတ်ပါဘူး။\n"
+                "Smile One page layout ကြောင့် "
+                "nickname selector မတွေ့တာ ဖြစ်နိုင်ပါတယ်။",
+                parse_mode="HTML"
+            )
+
+    except Exception as e:
+
+        await msg.edit_text(
+            "❌ <b>Check ID Error</b>\n\n"
+            f"<code>{html.escape(str(e)[:1500])}</code>",
+            parse_mode="HTML"
+        )
+
+
+# =========================================================
+# ERROR HANDLER
+# =========================================================
+
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    try:
+
+        print(
+            "BOT ERROR:",
+            repr(context.error)
+        )
+
+    except Exception:
+        pass
 
 
 # =========================================================
@@ -1012,10 +1159,32 @@ def main():
 
     if not BOT_TOKEN:
 
-        raise RuntimeError(
-            "BOT_TOKEN မတွေ့ပါဘူး။ "
-            "Railway Variables မှာ BOT_TOKEN ထည့်ပါ။"
+        print(
+            "❌ BOT_TOKEN environment variable "
+            "မရှိပါဘူး။"
         )
+
+        return
+
+    print(
+        "======================================"
+    )
+
+    print(
+        "🤖 Eren ML Dia Bot is starting..."
+    )
+
+    print(
+        "🌐 Smile One Browser System"
+    )
+
+    print(
+        "💎 Product / Balance / CheckID"
+    )
+
+    print(
+        "======================================"
+    )
 
     app = (
         Application.builder()
@@ -1054,24 +1223,33 @@ def main():
 
     app.add_handler(
         CommandHandler(
+            "login",
+            login
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
             "checkid",
             checkid
         )
     )
 
-    print(
-        "🤖 Eren ML Dia Bot is starting..."
+    app.add_error_handler(
+        error_handler
     )
 
     print(
         "✅ Bot is running!"
     )
 
-    app.run_polling()
+    app.run_polling(
+        drop_pending_updates=True
+    )
 
 
 # =========================================================
-# RUN
+# START BOT
 # =========================================================
 
 if __name__ == "__main__":
