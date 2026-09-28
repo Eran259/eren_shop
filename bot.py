@@ -1,686 +1,798 @@
 import os
-import re
-import asyncio
-import html
+import logging
+import requests
 
-from telegram import Update
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
+    CallbackQueryHandler,
     ContextTypes,
 )
 
-from playwright.async_api import async_playwright
+# ═══════════════════════════════════════
+# ⚙️ CONFIG
+# ═══════════════════════════════════════
 
+BOT_TOKEN = os.environ["BOT_TOKEN"]
 
-# =========================================================
-# CONFIG
-# =========================================================
+MELO_API_KEY = os.environ["MELO_API_KEY"]
+MELO_SECRET_KEY = os.environ["MELO_SECRET_KEY"]
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-SMILE_PROFILE = "/data/smile-profile"
-SMILE_URL = "https://www.smile.one/br/merchant/mobilelegends"
-SMILE_LOGIN_URL = "https://www.smile.one/customer/account/accountlogin"
+MELO_BASE_URL = "https://api.melostore.id"
 
-
-# =========================================================
-# GLOBAL BROWSER
-# =========================================================
-
-browser_lock = asyncio.Lock()
-_playwright = None
-_browser_context = None
-_page = None
-
-
-# =========================================================
-# OPEN / REUSE SMILE BROWSER
-# =========================================================
-
-async def open_browser():
-    global _playwright
-    global _browser_context
-    global _page
-
-    if (_browser_context is not None and _page is not None and not _page.is_closed()):
-        return _playwright, _browser_context, _page
-
-    os.makedirs(SMILE_PROFILE, exist_ok=True)
-    _playwright = await async_playwright().start()
-    _browser_context = await _playwright.chromium.launch_persistent_context(
-        user_data_dir=SMILE_PROFILE,
-        headless=True,
-        args=[
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--disable-setuid-sandbox",
-        ],
-        viewport={"width": 1366, "height": 900},
-        locale="pt-BR",
-    )
-
-    if _browser_context.pages:
-        _page = _browser_context.pages[0]
-    else:
-        _page = await _browser_context.new_page()
-
-    return _playwright, _browser_context, _page
-
-
-# =========================================================
-# CLOSE BROWSER
-# =========================================================
-
-async def close_browser():
-    global _playwright
-    global _browser_context
-    global _page
-
-    try:
-        if _browser_context:
-            await _browser_context.close()
-    except Exception:
-        pass
-
-    try:
-        if _playwright:
-            await _playwright.stop()
-    except Exception:
-        pass
-
-    _playwright = None
-    _browser_context = None
-    _page = None
-
-
-# =========================================================
-# SAFE PAGE TEXT
-# =========================================================
-
-async def get_page_text(page):
-    try:
-        text = await page.locator("body").inner_text(timeout=10000)
-        return text.strip()
-    except Exception:
-        return ""
-
-
-# =========================================================
-# LOGIN CHECK
-# =========================================================
-
-async def is_login_page(page):
-    try:
-        url = page.url.lower()
-        if "account/accountlogin" in url:
-            return True
-
-        text = (await get_page_text(page)).lower()
-        login_words = ["sign in with google", "log in with email", "sign in", "login"]
-        found = 0
-        for word in login_words:
-            if word in text:
-                found += 1
-
-        if found >= 2:
-            return True
-        return False
-    except Exception:
-        return False
-
-
-# =========================================================
-# /START
-# =========================================================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "🤖 <b>Eren ML Dia Bot</b>\n\n"
-        "💎 Mobile Legends Diamond Bot\n\n"
-        "📦 /product\n"
-        "🪙 /balance\n"
-        "🔍 /checkid ID SERVER\n"
-        "🔐 /login\n"
-        "🧪 /test\n\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "⚡ Smile One Browser System"
-    )
-    await update.message.reply_text(text, parse_mode="HTML")
-
-
-# =========================================================
-# /TEST
-# =========================================================
-
-async def test(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text("🌐 Smile One ကိုဖွင့်နေပါတယ်...")
-    try:
-        async with browser_lock:
-            pw, browser_context, page = await open_browser()
-            await page.goto(SMILE_URL, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(3000)
-            title = await page.title()
-            url = page.url
-
-        text = (
-            "✅ <b>Browser works!</b>\n\n"
-            "🌐 Smile One\n"
-            f"📄 Title: <code>{html.escape(title)}</code>\n"
-            f"🔗 URL: <code>{html.escape(url)}</code>"
-        )
-        await msg.edit_text(text, parse_mode="HTML")
-    except Exception as e:
-        await msg.edit_text(
-            "❌ <b>Browser Error</b>\n\n"
-            f"<code>{html.escape(str(e)[:1500])}</code>",
-            parse_mode="HTML"
-        )
-
-
-# =========================================================
-# SMILE COIN PAYMENT SELECTOR
-# =========================================================
-
-async def select_smile_coin(page):
-    selectors = ["text=Moeda Smile", "text=SmileCoin", "text=Smile Coin"]
-    for selector in selectors:
-        try:
-            locator = page.locator(selector).first
-            if await locator.count() > 0:
-                await locator.click(timeout=5000)
-                await page.wait_for_timeout(1000)
-                return True
-        except Exception:
-            pass
-
-    try:
-        elements = page.locator("label, div, span")
-        count = await elements.count()
-        for i in range(min(count, 500)):
-            try:
-                el = elements.nth(i)
-                text = (await el.inner_text(timeout=1000)).strip()
-                lower = text.lower()
-                if ("moeda smile" in lower or "smilecoin" in lower or "smile coin" in lower):
-                    await el.click(timeout=3000)
-                    await page.wait_for_timeout(1000)
-                    return True
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return False
-
-
-# =========================================================
-# EXTRACT SMILE COIN PRODUCTS (NEW)
-# =========================================================
-
-async def extract_products(page):
-    products = []
-    text = await get_page_text(page)
-    if not text:
-        return []
-
-    lines = [x.strip() for x in text.splitlines() if x.strip()]
-    
-    # ၁။ စိန် ပမာဏတွေကို ရှာမယ်
-    diamond_pattern = re.compile(
-        r"(\d[\d,.]*)\s*(?:\+\s*(\d[\d,.]*))?\s*"
-        r"(?:diamonds?|diamantes?)",
-        re.IGNORECASE
-    )
-
-    for index, line in enumerate(lines):
-        match = diamond_pattern.search(line)
-        if not match:
-            continue
-
-        base = match.group(1)
-        bonus = match.group(2)
-
-        if bonus:
-            diamond_name = f"{base}+{bonus} Diamonds"
-        else:
-            diamond_name = f"{base} Diamonds"
-
-        products.append({"name": diamond_name, "coin": None})
-
-    # ၂။ Smile Coin ဈေးနှုန်းကို ရှာမယ် (Payment Method အောက်မှာ ရှိတယ်)
-    coin_price = None
-    for line in lines:
-        if "smile coin" in line.lower():
-            match = re.search(r"([\d.,]+)", line)
-            if match:
-                coin_price = match.group(1)
-                break
-
-    # ၃။ Product တွေအားလုံးအတွက် Smile Coin ထည့်မယ်
-    if coin_price:
-        for item in products:
-            item["coin"] = coin_price
-
-    # Duplicate ဖျောက်မယ်
-    unique = []
-    seen = set()
-    for item in products:
-        key = item["name"]
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(item)
-
-    return unique
-
-
-# =========================================================
-# /PRODUCT (NEW)
-# =========================================================
-
-async def product(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text(
-        "💎 <b>MLBB Products</b>\n\n🌐 Smile One ကိုဖွင့်နေပါတယ်...",
-        parse_mode="HTML"
-    )
-
-    try:
-        async with browser_lock:
-            pw, browser_context, page = await open_browser()
-            await page.goto(SMILE_URL, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(3000)
-
-            if await is_login_page(page):
-                await msg.edit_text(
-                    "🔐 <b>Smile One Login လိုအပ်ပါတယ်</b>\n\n"
-                    "Google နဲ့ Smile One ထဲဝင်ပြီးမှ\n"
-                    "/product ကို ပြန်သုံးပါ။\n\n📌 /login",
-                    parse_mode="HTML"
-                )
-                return
-
-            # Smile Coin payment ကို ရွေးမယ်
-            await select_smile_coin(page)
-            products = await extract_products(page)
-
-        if not products:
-            await msg.edit_text("⚠️ <b>Product data မတွေ့သေးပါဘူး</b>", parse_mode="HTML")
-            return
-
-        lines = [
-            "💎 <b>MLBB DIAMOND PRODUCTS</b>",
-            "━━━━━━━━━━━━━━━━━━",
-            ""
-        ]
-
-        for item in products[:30]:
-            coin = item["coin"]
-            if coin:
-                coin_text = f"🪙 Smile Coin: <b>{coin}</b>"
-            else:
-                coin_text = "🪙 Smile Coin: ⚠️ Not detected"
-
-            lines.append(f"💎 <b>{html.escape(item['name'])}</b>")
-            lines.append(coin_text)
-            lines.append("")
-
-        await msg.edit_text("\n".join(lines), parse_mode="HTML")
-
-    except Exception as e:
-        await msg.edit_text(
-            "❌ <b>Product Error</b>\n\n"
-            f"<code>{html.escape(str(e)[:1500])}</code>",
-            parse_mode="HTML"
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
 )
 
-# =========================================================
-# /LOGIN
-# =========================================================
+logger = logging.getLogger(__name__)
 
-async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text(
-        "🔐 <b>Smile One Login</b>\n\n🌐 Login page ကိုဖွင့်နေပါတယ်...",
-        parse_mode="HTML"
+
+# ═══════════════════════════════════════
+# 🔐 MELOSTORE API
+# ═══════════════════════════════════════
+
+def melo_headers():
+    return {
+        "X-API-Key": MELO_API_KEY,
+        "X-Secret-Key": MELO_SECRET_KEY,
+    }
+
+
+def get_profile():
+    url = f"{MELO_BASE_URL}/api/v1/h2h/profile"
+
+    response = requests.get(
+        url,
+        headers=melo_headers(),
+        timeout=30,
     )
 
-    try:
-        async with browser_lock:
-            pw, browser_context, page = await open_browser()
-            await page.goto(SMILE_LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(3000)
+    response.raise_for_status()
+    return response.json()
 
-        await msg.edit_text(
-            "🔐 <b>Smile One Login Page ဖွင့်ပြီးပါပြီ</b>\n\n"
-            "Google နဲ့ Smile One ကို Login ဝင်ပေးပါ။\n\n"
-            "⚠️ ဒီ bot က Google password / OTP ကို မတောင်းပါဘူး။\n\n"
-            "Login ပြီးသွားရင်\n"
-            "👉 /balance\n"
-            "👉 /product\n"
-            "ကို ပြန်စမ်းပါ။",
-            parse_mode="HTML"
+
+def get_balance():
+    url = f"{MELO_BASE_URL}/api/v1/h2h/profile/balance"
+
+    response = requests.get(
+        url,
+        headers=melo_headers(),
+        timeout=30,
+    )
+
+    response.raise_for_status()
+    return response.json()
+
+
+def get_pricelists():
+    url = f"{MELO_BASE_URL}/api/v1/h2h/pricelists"
+
+    response = requests.get(
+        url,
+        headers=melo_headers(),
+        params={"limit": 500},
+        timeout=30,
+    )
+
+    response.raise_for_status()
+    return response.json()
+
+
+# ═══════════════════════════════════════
+# 🏠 START
+# ═══════════════════════════════════════
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "💎 MLBB Diamonds",
+                callback_data="products"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "💰 H2H Balance",
+                callback_data="balance"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔌 API Status",
+                callback_data="api_status"
+            )
+        ],
+    ]
+
+    text = """
+✨ <b>Eren's Diamond Bot</b> ✨
+━━━━━━━━━━━━━━━━━━━━
+
+💎 <b>MLBB Diamond Top-Up</b>
+
+🛒 Choose your service below.
+
+━━━━━━━━━━━━━━━━━━━━
+⚡ Powered by Melostore H2H
+"""
+
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML",
         )
 
-    except Exception as e:
-        await msg.edit_text(
-            "❌ <b>Login Page Error</b>\n\n"
-            f"<code>{html.escape(str(e)[:1500])}</code>",
-            parse_mode="HTML"
-        )
-
-
-# =========================================================
-# /BALANCE
-# =========================================================
+# ═══════════════════════════════════════
+# 💰 H2H BALANCE
+# ═══════════════════════════════════════
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text(
-        "🪙 <b>Smile Coin Balance</b>\n\n🔍 စစ်ဆေးနေပါတယ်...",
-        parse_mode="HTML"
-    )
+
+    query = update.callback_query
+    await query.answer()
 
     try:
-        async with browser_lock:
-            pw, browser_context, page = await open_browser()
-            await page.goto(SMILE_URL, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(3000)
+        result = get_balance()
 
-            if await is_login_page(page):
-                await msg.edit_text(
-                    "🔐 <b>Smile One Login မဝင်ရသေးပါဘူး</b>\n\n"
-                    "Google နဲ့ Login ဝင်ပြီးမှ\n"
-                    "/balance ကို ပြန်သုံးပါ။\n\n📌 /login",
-                    parse_mode="HTML"
+        if not result.get("success"):
+            await query.edit_message_text(
+                "❌ <b>Balance Check Failed</b>",
+                parse_mode="HTML",
+            )
+            return
+
+        data = result.get("data", {})
+
+        balance_mc = float(data.get("h2h_balance", 0))
+        balance_usd = float(data.get("h2h_balance_usd", 0))
+        rate = float(data.get("usd_idr_rate", 0))
+
+        sandbox = data.get(
+            "is_sandbox_mode",
+            False
+        )
+
+        mode = (
+            "🧪 Sandbox Mode"
+            if sandbox
+            else "🚀 Production Mode"
+        )
+
+        text = f"""
+💰 <b>H2H Balance</b>
+━━━━━━━━━━━━━━━━━━━━
+
+🪙 MC Balance
+<b>{balance_mc:,.2f} MC</b>
+
+💵 USD Value
+<b>${balance_usd:,.2f}</b>
+
+💱 USD / IDR Rate
+<b>{rate:,.0f}</b>
+
+⚙️ Mode
+<b>{mode}</b>
+
+━━━━━━━━━━━━━━━━━━━━
+🔐 Melostore H2H
+"""
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔄 Refresh",
+                    callback_data="balance"
                 )
-                return
-
-            text = await get_page_text(page)
-
-        lines = [x.strip() for x in text.splitlines() if x.strip()]
-        balance_value = None
-
-        patterns = [
-            re.compile(r"(?:smile\s*coin|smilecoin|moeda\s*smile)\s*[:\-]?\s*([\d.,]+)", re.IGNORECASE),
-            re.compile(r"([\d.,]+)\s*(?:smile\s*coin|smilecoin|moeda\s*smile)", re.IGNORECASE),
-            re.compile(r"balance\s*[:\-]?\s*([\d.,]+)", re.IGNORECASE),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🏠 Home",
+                    callback_data="home"
+                )
+            ],
         ]
 
-        for line in lines:
-            for pattern in patterns:
-                match = pattern.search(line)
-                if match:
-                    balance_value = match.group(1)
-                    break
-            if balance_value:
-                break
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML",
+        )
 
-        if not balance_value:
-            try:
-                elements = page.locator("span, div, p, a")
-                count = await elements.count()
-                for i in range(min(count, 1000)):
-                    try:
-                        el = elements.nth(i)
-                        value = (await el.inner_text(timeout=500)).strip()
-                        if not value:
-                            continue
-                        lower = value.lower()
-                        if not ("smile coin" in lower or "smilecoin" in lower or "moeda smile" in lower):
-                            continue
-                        for pattern in patterns:
-                            match = pattern.search(value)
-                            if match:
-                                balance_value = match.group(1)
-                                break
-                        if balance_value:
-                            break
-                    except Exception:
-                        continue
-            except Exception:
-                pass
+    except requests.HTTPError as e:
 
-        if balance_value:
-            await msg.edit_text(
-                "🪙 <b>Smile Coin Balance</b>\n"
-                "━━━━━━━━━━━━━━━━━━\n\n"
-                f"💰 Balance: <b>{html.escape(balance_value)}</b>\n\n"
-                "✅ Smile One session active",
-                parse_mode="HTML"
-            )
-        else:
-            await msg.edit_text(
-                "⚠️ <b>Smile Coin Balance မတွေ့သေးပါဘူး</b>\n\n"
-                "Login session ရှိနေပါတယ်။\n"
-                "ဒါပေမယ့် page ထဲက Coin balance ကို မဖတ်နိုင်သေးပါဘူး။",
-                parse_mode="HTML"
-            )
+        logger.error(
+            "Balance HTTP error: %s",
+            e
+        )
+
+        await query.edit_message_text(
+            "❌ <b>Balance API Error</b>\n\n"
+            "⏳ Please try again later.",
+            parse_mode="HTML",
+        )
 
     except Exception as e:
-        await msg.edit_text(
-            "❌ <b>Balance Error</b>\n\n"
-            f"<code>{html.escape(str(e)[:1500])}</code>",
-            parse_mode="HTML"
+
+        logger.error(
+            "Balance error: %s",
+            e
+        )
+
+        await query.edit_message_text(
+            "❌ <b>Unable to check balance.</b>\n\n"
+            "🔧 Please check Railway Variables.",
+            parse_mode="HTML",
         )
 
 
-# =========================================================
-# PLAYER NICKNAME FINDER
-# =========================================================
+# ═══════════════════════════════════════
+# 📦 PRODUCT / PRICELIST
+# ═══════════════════════════════════════
 
-async def find_player_nickname(page):
-    selectors = [
-        '[class*="nickname"]', '[class*="NickName"]',
-        '[class*="player-name"]', '[class*="playerName"]',
-        '[class*="role-name"]', '[class*="roleName"]',
-        '[class*="user-name"]', '[class*="userName"]',
-    ]
+async def products(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-    bad_words = [
-        "mobile legends", "mobile legend", "moonton", "diamond",
-        "diamonds", "smile one", "smilecoin", "smile coin",
-        "server", "player", "online battle arena", "moba",
-    ]
+    query = update.callback_query
+    await query.answer()
 
-    for selector in selectors:
-        try:
-            elements = page.locator(selector)
-            count = await elements.count()
-            for i in range(min(count, 50)):
-                try:
-                    value = (await elements.nth(i).inner_text(timeout=1000)).strip()
-                    if not value:
-                        continue
-                    if len(value) > 80:
-                        continue
-                    lower = value.lower()
-                    if any(word in lower for word in bad_words):
-                        continue
-                    if re.fullmatch(r"[\d\s.,+-]+", value):
-                        continue
-                    return value
-                except Exception:
-                    continue
-        except Exception:
-            continue
-    return None
-
-
-# =========================================================
-# /CHECKID
-# =========================================================
-
-async def checkid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
-    if len(args) < 2:
-        await update.message.reply_text(
-            "❌ <b>Format မှားနေပါတယ်</b>\n\n"
-            "အသုံးပြုပုံ:\n"
-            "<code>/checkid GAME_ID SERVER_ID</code>\n\n"
-            "ဥပမာ:\n"
-            "<code>/checkid 1662307694 18012</code>",
-            parse_mode="HTML"
-        )
-        return
-
-    game_id = args[0]
-    server_id = args[1]
-
-    msg = await update.message.reply_text(
-        "🔍 <b>Checking Mobile Legends ID...</b>\n\n"
-        f"🆔 ID: <code>{html.escape(game_id)}</code>\n"
-        f"🌐 Server: <code>{html.escape(server_id)}</code>",
-        parse_mode="HTML"
+    await query.edit_message_text(
+        "📦 <b>Loading Products...</b>\n\n"
+        "⏳ Please wait...",
+        parse_mode="HTML",
     )
 
     try:
-        async with browser_lock:
-            pw, browser_context, page = await open_browser()
-            await page.goto(SMILE_URL, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(3000)
 
-            if await is_login_page(page):
-                await msg.edit_text(
-                    "🔐 <b>Smile One Login လိုအပ်ပါတယ်</b>\n\n"
-                    "Google နဲ့ Login ဝင်ပြီးမှ /checkid ကို ပြန်သုံးပါ။",
-                    parse_mode="HTML"
-                )
-                return
+        result = get_pricelists()
 
-            # Fill Game ID
-            filled_id = False
-            id_selectors = [
-                'input[name="uid"]', 'input[name="user_id"]',
-                'input[name="userid"]', 'input[name="game_id"]',
-                'input[placeholder*="ID"]', 'input[placeholder*="id"]',
-            ]
-            for selector in id_selectors:
-                try:
-                    loc = page.locator(selector).first
-                    if await loc.count() > 0:
-                        await loc.fill(game_id, timeout=3000)
-                        filled_id = True
-                        break
-                except Exception:
-                    continue
+        if not result.get("success"):
 
-            # Fill Server ID
-            filled_server = False
-            server_selectors = [
-                'input[name="server"]', 'input[name="server_id"]',
-                'input[name="zone"]', 'input[name="zone_id"]',
-                'input[placeholder*="Server"]', 'input[placeholder*="server"]',
-            ]
-            for selector in server_selectors:
-                try:
-                    loc = page.locator(selector).first
-                    if await loc.count() > 0:
-                        await loc.fill(server_id, timeout=3000)
-                        filled_server = True
-                        break
-                except Exception:
-                    continue
-
-            # Click verification button
-            clicked = False
-            buttons = page.locator("button, a")
-            count = await buttons.count()
-            for i in range(min(count, 300)):
-                try:
-                    button = buttons.nth(i)
-                    text = (await button.inner_text(timeout=500)).strip()
-                    lower = text.lower()
-                    if any(key in lower for key in ["check", "verify", "confirm", "search", "verificar", "consultar"]):
-                        await button.click(timeout=3000)
-                        clicked = True
-                        await page.wait_for_timeout(2500)
-                        break
-                except Exception:
-                    continue
-
-            nickname = await find_player_nickname(page)
-
-        if nickname:
-            await msg.edit_text(
-                "✅ <b>PLAYER FOUND</b>\n"
-                "━━━━━━━━━━━━━━━━━━\n\n"
-                f"👤 Player: <b>{html.escape(nickname)}</b>\n"
-                f"🆔 ID: <code>{html.escape(game_id)}</code>\n"
-                f"🌐 Server: <code>{html.escape(server_id)}</code>\n\n"
-                "✅ ID verification result found.",
-                parse_mode="HTML"
+            await query.edit_message_text(
+                "❌ <b>Unable to load products.</b>",
+                parse_mode="HTML",
             )
+            return
+
+        products_data = result.get(
+            "data",
+            []
+        )
+
+        meta = result.get(
+            "meta",
+            {}
+        )
+
+        brands = meta.get(
+            "brands",
+            []
+        )
+
+        # ═══════════════════════════════
+        # 🔎 BRAND LOOKUP
+        # ═══════════════════════════════
+
+        brand_map = {}
+
+        for brand in brands:
+
+            brand_id = brand.get("id")
+
+            brand_name = brand.get(
+                "name",
+                ""
+            )
+
+            brand_map[brand_id] = brand_name
+
+        # ═══════════════════════════════
+        # 💎 FIND MLBB PRODUCTS
+        # ═══════════════════════════════
+
+        ml_products = []
+
+        for product in products_data:
+
+            if product.get("status") != "active":
+                continue
+
+            brand_id = product.get(
+                "brand_id"
+            )
+
+            brand_name = str(
+                brand_map.get(
+                    brand_id,
+                    ""
+                )
+            ).lower()
+
+            type_name = str(
+                product.get(
+                    "type_name",
+                    ""
+                )
+            ).lower()
+
+            product_name = str(
+                product.get(
+                    "name",
+                    ""
+                )
+            ).lower()
+
+            is_mlbb = (
+                "mobile legends" in brand_name
+                or "mobile legends" in type_name
+                or "ml diamonds" in type_name
+                or "mobile legends" in product_name
+            )
+
+            if is_mlbb:
+                ml_products.append(product)
+
+        # ═══════════════════════════════
+        # ⚠️ NO MLBB PRODUCTS
+        # ═══════════════════════════════
+
+        if not ml_products:
+
+            await query.edit_message_text(
+                "⚠️ <b>MLBB Products Not Found</b>\n\n"
+                "📦 No active Mobile Legends "
+                "products were detected.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Refresh",
+                            callback_data="products"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "🏠 Home",
+                            callback_data="home"
+                        )
+                    ],
+                ]),
+            )
+
+            return
+
+        # ═══════════════════════════════
+        # 💰 SORT BY PRICE
+        # ═══════════════════════════════
+
+        def product_price(product):
+
+            try:
+                return float(
+                    product.get(
+                        "price",
+                        0
+                    )
+                )
+
+            except (TypeError, ValueError):
+                return 0
+
+        ml_products.sort(
+            key=product_price
+        )
+
+        # Show maximum 20 products
+        display_products = ml_products[:20]
+
+        keyboard = []
+
+        for product in display_products:
+
+            name = product.get(
+                "name",
+                "Unknown Product"
+            )
+
+            price = product.get(
+                "price",
+                0
+            )
+
+            sku = product.get(
+                "sku_code",
+                ""
+            )
+
+            server = product.get(
+                "server_code",
+                ""
+            )
+
+            button_text = (
+                f"💎 {name} "
+                f"• {price:,.0f} MC"
+            )
+
+            if server:
+                button_text += (
+                    f" • {server}"
+                )
+
+            keyboard.append([
+                InlineKeyboardButton(
+                    button_text[:64],
+                    callback_data=f"product:{sku}"
+                )
+            ])
+
+        # ═══════════════════════════════
+        # 🔄 BUTTONS
+        # ═══════════════════════════════
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "🔄 Refresh",
+                callback_data="products"
+            ),
+            InlineKeyboardButton(
+                "🏠 Home",
+                callback_data="home"
+            ),
+        ])
+
+        text = f"""
+💎 <b>Mobile Legends Diamonds</b>
+━━━━━━━━━━━━━━━━━━━━
+
+📦 Available:
+<b>{len(ml_products)}</b> products
+
+✨ Choose your Diamond package:
+
+━━━━━━━━━━━━━━━━━━━━
+⚡ Live Melostore Pricelist
+"""
+
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                keyboard
+            ),
+            parse_mode="HTML",
+        )
+
+    except requests.HTTPError as e:
+
+        logger.error(
+            "Pricelist HTTP error: %s",
+            e
+        )
+
+        status_code = (
+            e.response.status_code
+            if e.response is not None
+            else 0
+        )
+
+        if status_code == 429:
+
+            await query.edit_message_text(
+                "⏳ <b>Too Many Requests</b>\n\n"
+                "📦 Pricelist API rate limit "
+                "reached.\n\n"
+                "🔄 Please try again shortly.",
+                parse_mode="HTML",
+            )
+
         else:
-            status = []
-            if filled_id:
-                status.append("🆔 Game ID entered")
-            if filled_server:
-                status.append("🌐 Server ID entered")
-            if clicked:
-                status.append("🔍 Verification attempted")
 
-            status_text = "\n".join(status) if status else "⚠️ ID input field ကို မတွေ့သေးပါဘူး။"
-
-            await msg.edit_text(
-                "⚠️ <b>Player result မရသေးပါဘူး</b>\n\n"
-                f"🆔 ID: <code>{html.escape(game_id)}</code>\n"
-                f"🌐 Server: <code>{html.escape(server_id)}</code>\n\n"
-                f"{status_text}\n\n"
-                "📌 ဒီ result က ID invalid လို့ ဆိုလိုတာမဟုတ်ပါဘူး။\n"
-                "Smile One page layout ကြောင့် nickname selector မတွေ့တာ ဖြစ်နိုင်ပါတယ်။",
-                parse_mode="HTML"
+            await query.edit_message_text(
+                "❌ <b>Pricelist API Error</b>\n\n"
+                "⏳ Please try again later.",
+                parse_mode="HTML",
             )
 
     except Exception as e:
-        await msg.edit_text(
-            "❌ <b>Check ID Error</b>\n\n"
-            f"<code>{html.escape(str(e)[:1500])}</code>",
-            parse_mode="HTML"
+
+        logger.error(
+            "Products error: %s",
+            e
+        )
+
+        await query.edit_message_text(
+            "❌ <b>Product Loading Failed</b>\n\n"
+            "🔧 Please check your API settings.",
+            parse_mode="HTML",
+        )
+
+# ═══════════════════════════════════════
+# 🔌 API STATUS
+# ═══════════════════════════════════════
+
+async def api_status(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+    await query.answer()
+
+    try:
+
+        result = get_profile()
+
+        if not result.get("success"):
+            raise Exception("API response failed")
+
+        data = result.get("data", {})
+        tier = data.get("tier", {})
+
+        tier_name = tier.get(
+            "name",
+            "Unknown"
+        )
+
+        rate_limit = tier.get(
+            "rate_limit",
+            "Unknown"
+        )
+
+        max_ips = tier.get(
+            "max_ips",
+            "Unknown"
+        )
+
+        sandbox = data.get(
+            "is_sandbox_mode",
+            False
+        )
+
+        mode = (
+            "🧪 Sandbox Mode"
+            if sandbox
+            else "🚀 Production Mode"
+        )
+
+        text = f"""
+🔌 <b>Melostore H2H API</b>
+━━━━━━━━━━━━━━━━━━━━
+
+🟢 Connection
+<b>ONLINE</b>
+
+🏆 Tier
+<b>{tier_name}</b>
+
+⚡ Rate Limit
+<b>{rate_limit} req/min</b>
+
+🌐 Max IPs
+<b>{max_ips}</b>
+
+⚙️ Mode
+<b>{mode}</b>
+
+━━━━━━━━━━━━━━━━━━━━
+✨ API Connection Healthy
+"""
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔄 Refresh",
+                    callback_data="api_status"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🏠 Home",
+                    callback_data="home"
+                )
+            ],
+        ]
+
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML",
+        )
+
+    except Exception as e:
+
+        logger.error(
+            "API status error: %s",
+            e
+        )
+
+        await query.edit_message_text(
+            """
+🔴 <b>API OFFLINE</b>
+━━━━━━━━━━━━━━━━━━━━
+
+❌ Unable to connect to
+Melostore H2H API.
+
+🔧 Check your Railway Variables.
+""",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔄 Try Again",
+                        callback_data="api_status"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🏠 Home",
+                        callback_data="home"
+                    )
+                ],
+            ]),
         )
 
 
-# =========================================================
-# ERROR HANDLER
-# =========================================================
+# ═══════════════════════════════════════
+# 🏠 HOME
+# ═══════════════════════════════════════
 
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        print("BOT ERROR:", repr(context.error))
-    except Exception:
-        pass
+async def home(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+    await query.answer()
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "💎 MLBB Diamonds",
+                callback_data="products"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "💰 H2H Balance",
+                callback_data="balance"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔌 API Status",
+                callback_data="api_status"
+            )
+        ],
+    ]
+
+    text = """
+✨ <b>Eren's Diamond Bot</b> ✨
+━━━━━━━━━━━━━━━━━━━━
+
+💎 <b>MLBB Diamond Top-Up</b>
+
+🛒 Choose your service:
+
+💎 Diamonds
+💰 H2H Balance
+🔌 API Status
+
+━━━━━━━━━━━━━━━━━━━━
+⚡ Powered by Melostore H2H
+"""
+
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML",
+    )
 
 
-# =========================================================
-# MAIN
-# =========================================================
+# ═══════════════════════════════════════
+# 🔘 CALLBACK ROUTER
+# ═══════════════════════════════════════
+
+async def callback_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+    data = query.data
+
+    if data == "balance":
+
+        await balance(
+            update,
+            context
+        )
+
+    elif data == "products":
+
+        await products(
+            update,
+            context
+        )
+
+    elif data == "api_status":
+
+        await api_status(
+            update,
+            context
+        )
+
+    elif data == "home":
+
+        await home(
+            update,
+            context
+        )
+
+    elif data.startswith("product:"):
+
+        sku = data.split(
+            ":",
+            1
+        )[1]
+
+        await query.answer(
+            f"💎 Selected: {sku}",
+            show_alert=True
+        )
+
+
+# ═══════════════════════════════════════
+# 🚀 MAIN
+# ═══════════════════════════════════════
 
 def main():
-    if not BOT_TOKEN:
-        print("❌ BOT_TOKEN environment variable မရှိပါဘူး။")
-        return
 
-    print("======================================")
-    print("🤖 Eren ML Dia Bot is starting...")
-    print("🌐 Smile One Browser System")
-    print("💎 Product / Balance / CheckID")
-    print("======================================")
+    print(
+        "🤖 Eren Diamond Bot is starting..."
+    )
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = (
+        Application
+        .builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("test", test))
-    app.add_handler(CommandHandler("product", product))
-    app.add_handler(CommandHandler("balance", balance))
-    app.add_handler(CommandHandler("login", login))
-    app.add_handler(CommandHandler("checkid", checkid))
+    # /start
+    app.add_handler(
+        CommandHandler(
+            "start",
+            start
+        )
+    )
 
-    app.add_error_handler(error_handler)
+    # Inline buttons
+    app.add_handler(
+        CallbackQueryHandler(
+            callback_handler
+        )
+    )
 
-    print("✅ Bot is running!")
-    app.run_polling(drop_pending_updates=True)
+    print(
+        "✅ Bot is running!"
+    )
+
+    app.run_polling()
 
 
-# =========================================================
-# START BOT
-# =========================================================
+# ═══════════════════════════════════════
+# ▶️ START BOT
+# ═══════════════════════════════════════
 
 if __name__ == "__main__":
     main()
