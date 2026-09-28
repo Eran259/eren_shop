@@ -26,7 +26,6 @@ from telegram.ext import (
 # =========================================================
 # CONFIG
 # =========================================================
-
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 MELO_API_KEY = os.getenv("MELO_API_KEY", "")
 MELO_SECRET_KEY = os.getenv("MELO_SECRET_KEY", "")
@@ -192,9 +191,9 @@ async def handle_access_callback(update, context):
 # ဒီနေရာမှာ မင်းရောင်းမယ့် MMK price တွေ ထည့်မယ်။
 # ဥပမာ:
 # MMK_PRICES = {
-#     "Global": {"78+8": 5000, "86": 5600},
-#     "Malaysia": {"78+8": 5200},
-#     "Indonesia": {"78+8": 5500},
+#     "Global": {"1.045": 5000, "10.45": 50000},
+#     "Malaysia": {"1.045": 5200},
+#     "Indonesia": {"1.045": 5500},
 # }
 
 MMK_PRICES = {
@@ -212,6 +211,13 @@ PRODUCT_CACHE_TTL = 300  # 5 မိနစ်
 PRODUCT_LOAD_LOCK = threading.Lock()
 PRODUCT_LAST_ERROR = {}
 
+# Server Code Mapping (Melostore API အရ)
+SERVER_API_CODE = {
+    "Global": "Legacy",
+    "Malaysia": "MY",
+    "Indonesia": "ID",
+}
+
 # =========================================================
 # API HELPERS
 # =========================================================
@@ -224,7 +230,7 @@ def api_headers():
 def api_get(path, params=None):
     url = MELO_BASE_URL + path
     try:
-        response = requests.get(url, headers=api_headers(), params=params, timeout=30)
+        response = requests.get(url, headers=api_headers(), params=params, timeout=60)
         try:
             data = response.json()
         except Exception:
@@ -240,7 +246,7 @@ def api_post(path, payload):
     headers = api_headers()
     headers["Content-Type"] = "application/json"
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
         try:
             data = response.json()
         except Exception:
@@ -251,9 +257,6 @@ def api_post(path, payload):
     except requests.RequestException as e:
         return None, str(e)
 
-# =========================================================
-# PROFILE / BALANCE
-# =========================================================
 def get_profile():
     return api_get("/api/v1/h2h/profile")
 
@@ -303,21 +306,6 @@ def diamond_sort_key(product):
             pass
     return 999999999
 
-def is_mlbb_product(product):
-    text = " ".join([
-        clean_text(product.get("name")),
-        clean_text(product.get("type_name")),
-        clean_text(product.get("category_name")),
-        clean_text(product.get("server_name")),
-        clean_text(product.get("game_code")),
-    ]).lower()
-    return (
-        "mobile legends" in text or
-        "mobile legend" in text or
-        "mlbb" in text or
-        "mobile-legends" in text
-    )
-
 def _dedupe_products(products):
     unique = {}
     for product in products:
@@ -343,60 +331,65 @@ def _dedupe_products(products):
 def load_server_products(server):
     """
     Melostore H2H API မှ MLBB Products များကို ဆွဲထုတ်ပါ။
+    Documentation အရ Endpoint = /api/v1/h2h/pricelists
+    Server Code = Legacy (Global), MY (Malaysia), ID (Indonesia)
     """
-    # MLBB အတွက် API က game_code = 'mobile-legends' ကို လက်ခံပါတယ်။
+    api_server = SERVER_API_CODE.get(server)
+    if not api_server:
+        return [], "Invalid server"
+
     params = {
-        "game_code": "mobile-legends",
+        "server": api_server,
         "limit": 1000
     }
     
-    # မှန်ကန်သော Endpoint ကို ခေါ်ပါ
-    data, error = api_get("/api/v1/h2h/products", params=params)
+    data, error = api_get("/api/v1/h2h/pricelists", params=params)
     
     if error:
         PRODUCT_LAST_ERROR[server] = error
-        print(f"API Error [{server}]: {error}")
+        print(f"❌ API Error [{server}]: {error}")
         return [], error
 
     rows = data.get("data", []) if isinstance(data, dict) else []
+    meta = data.get("meta", {}) if isinstance(data, dict) else {}
     
-    # Debug: API က ဘယ်နှစ်ခု ပြန်ပေးလဲဆိုတာ ကြည့်ရန်
-    print(f"API returned {len(rows)} products for {server}")
+    # Brand ID ကို Brand Name အဖြစ် ပြောင်းပါ
+    brands = meta.get("brands", [])
+    brand_map = {str(x.get("id")): x.get("name", "") for x in brands if isinstance(x, dict)}
+    
+    print(f"📦 API returned {len(rows)} products for {server}")
 
     products = []
     for product in rows:
-        if not is_mlbb_product(product):
+        brand_id = str(product.get("brand_id", ""))
+        brand_name = brand_map.get(brand_id, "")
+        
+        # Brand Name ထဲမှာ "Mobile Legends" ပါမပါ စစ်ပါ
+        brand_text = f"{brand_name} {product.get('name', '')} {product.get('type_name', '')}".lower()
+        
+        is_mlbb = (
+            "mobile legends" in brand_text or
+            "mobile legend" in brand_text or
+            "mlbb" in brand_text or
+            "ml " in brand_text
+        )
+        
+        if not is_mlbb:
             continue
             
-        # Product ရဲ့ server_name (သို့) name ထဲမှာ Global/Malaysia/Indonesia ပါမပါ စစ်ပါ
-        text_to_check = " ".join([
-            clean_text(product.get("name")),
-            clean_text(product.get("server_name")),
-            clean_text(product.get("type_name")),
-            clean_text(product.get("description")),
-        ]).lower()
-        
-        product_server = None
-        if "indonesia" in text_to_check or "indonesian" in text_to_check:
-            product_server = "Indonesia"
-        elif "malaysia" in text_to_check or "malaysian" in text_to_check:
-            product_server = "Malaysia"
-        elif "global" in text_to_check or "worldwide" in text_to_check:
-            product_server = "Global"
-            
-        # သင့် Bot က ရွေးထားတဲ့ Server နဲ့ Product ရဲ့ Server တူမှသာ ထည့်ပါ
-        if product_server == server:
-            item = dict(product)
-            item["server"] = server
-            item["amount"] = normalize_product_name(product.get("name", ""))
-            if item["amount"]:
-                products.append(item)
+        item = dict(product)
+        item["server"] = server
+        item["brand_name"] = brand_name
+        item["amount"] = normalize_product_name(product.get("name", ""))
+        if item["amount"]:
+            products.append(item)
 
+    print(f"✅ Filtered {len(products)} MLBB products for {server}")
     return _dedupe_products(products), None
 
 def refresh_products(server=None, force=False):
     global PRODUCT_CACHE, LAST_PRODUCTS_LOAD
-    servers = [server] if server else list(PRODUCT_CACHE.keys())
+    servers = [server] if server else list(SERVER_API_CODE.keys())
     now = time.time()
 
     with PRODUCT_LOAD_LOCK:
@@ -735,7 +728,7 @@ async def confirm_order(query, context):
     await query.edit_message_text(text, parse_mode="HTML")
     context.user_data.clear()
 
-    # =========================================================
+# =========================================================
 # CALLBACK HANDLERS
 # =========================================================
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -765,10 +758,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         products, load_error = ensure_server_products(server)
 
         if not products:
+            # Error Message ကို အတိုချုံးပြပါ (Message_too_long မဖြစ်အောင်)
+            error_msg = str(load_error)[:150] if load_error else "Pricelist empty ဖြစ်နေပါတယ်။"
             await query.edit_message_text(
                 f"❌ <b>{html.escape(server)} Server</b>\n\n"
                 "ဒီ server အတွက် MLBB product မတွေ့ပါ။\n\n"
-                + (f"API: {html.escape(str(load_error))}" if load_error else "Pricelist empty ဖြစ်နေပါတယ်။"),
+                f"API: {html.escape(error_msg)}",
                 parse_mode="HTML",
                 reply_markup=server_keyboard(),
             )
