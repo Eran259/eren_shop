@@ -1,96 +1,166 @@
 import os
 import re
-import time
-import logging
+import uuid
+import html
 import requests
+from collections import defaultdict
 
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
-    KeyboardButton,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
 )
-
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-MELO_API_KEY = os.environ["MELO_API_KEY"]
-MELO_SECRET_KEY = os.environ["MELO_SECRET_KEY"]
+
+# =========================================================
+# CONFIG
+# =========================================================
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+
+MELO_API_KEY = os.getenv("MELO_API_KEY", "")
+MELO_SECRET_KEY = os.getenv("MELO_SECRET_KEY", "")
 
 MELO_BASE_URL = "https://api.melostore.id"
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-
-logger = logging.getLogger(__name__)
+# Railway မှာ true ထားချင်ရင်
+# MELO_SANDBOX=true
+MELO_SANDBOX = os.getenv("MELO_SANDBOX", "true").lower() == "true"
 
 
-# =========================
-# API
-# =========================
+# =========================================================
+# CUSTOMER MMK PRICE
+# =========================================================
+#
+# ဒီနေရာမှာ မင်းရောင်းမယ့် MMK price တွေ ထည့်မယ်။
+#
+# ဥပမာ:
+#
+# MMK_PRICES = {
+#     "Global": {
+#         "78+8": 5000,
+#         "86": 5600,
+#     },
+#     "Malaysia": {
+#         "78+8": 5200,
+#     },
+#     "Indonesia": {
+#         "78+8": 5500,
+#     },
+# }
+#
+# အခု မင်း price မပေးသေးလို့ empty ထားထားတယ်။
+#
 
-def melo_headers():
+
+MMK_PRICES = {
+    "Global": {},
+    "Malaysia": {},
+    "Indonesia": {},
+}
+
+
+# =========================================================
+# RUNTIME CACHE
+# =========================================================
+
+PRODUCT_CACHE = {
+    "Global": [],
+    "Malaysia": [],
+    "Indonesia": [],
+}
+
+LAST_PRODUCTS_LOAD = 0
+
+
+# =========================================================
+# API HELPERS
+# =========================================================
+
+def api_headers():
     return {
         "X-API-Key": MELO_API_KEY,
         "X-Secret-Key": MELO_SECRET_KEY,
-        "Content-Type": "application/json",
     }
 
 
-def api_get(path, params=None, timeout=30):
+def api_get(path, params=None):
+    url = MELO_BASE_URL + path
+
     try:
-        r = requests.get(
-            MELO_BASE_URL + path,
-            headers=melo_headers(),
+        response = requests.get(
+            url,
+            headers=api_headers(),
             params=params,
-            timeout=timeout,
+            timeout=30,
         )
 
         try:
-            data = r.json()
+            data = response.json()
         except Exception:
-            data = {}
+            data = {
+                "success": False,
+                "message": response.text,
+            }
 
-        return r.status_code, data
+        if response.status_code >= 400:
+            return None, (
+                data.get("message")
+                or f"HTTP {response.status_code}"
+            )
 
-    except Exception as e:
-        logger.exception("GET API error")
-        return 0, {
-            "success": False,
-            "message": str(e),
-        }
+        return data, None
+
+    except requests.RequestException as e:
+        return None, str(e)
 
 
-def api_post(path, payload, timeout=30):
+def api_post(path, payload):
+    url = MELO_BASE_URL + path
+
+    headers = api_headers()
+    headers["Content-Type"] = "application/json"
+
     try:
-        r = requests.post(
-            MELO_BASE_URL + path,
-            headers=melo_headers(),
+        response = requests.post(
+            url,
+            headers=headers,
             json=payload,
-            timeout=timeout,
+            timeout=30,
         )
 
         try:
-            data = r.json()
+            data = response.json()
         except Exception:
-            data = {}
+            data = {
+                "success": False,
+                "message": response.text,
+            }
 
-        return r.status_code, data
+        if response.status_code >= 400:
+            return None, (
+                data.get("message")
+                or f"HTTP {response.status_code}"
+            )
 
-    except Exception as e:
-        logger.exception("POST API error")
-        return 0, {
-            "success": False,
-            "message": str(e),
-        }
+        return data, None
 
+    except requests.RequestException as e:
+        return None, str(e)
+
+
+# =========================================================
+# PROFILE / BALANCE
+# =========================================================
 
 def get_profile():
     return api_get("/api/v1/h2h/profile")
@@ -100,107 +170,200 @@ def get_balance():
     return api_get("/api/v1/h2h/profile/balance")
 
 
-# =========================
-# PRICE CACHE
-# =========================
+# =========================================================
+# TEXT HELPERS
+# =========================================================
 
-PRICE_CACHE = {
-    "time": 0,
-    "products": [],
-}
+def clean_text(value):
+    if value is None:
+        return ""
 
-CACHE_SECONDS = 60
+    return str(value).strip()
 
 
-def is_mlbb_product(product, brand_name=""):
-    name = str(product.get("name", "")).lower()
-    type_name = str(product.get("type_name", "")).lower()
-    category = str(product.get("category_name", "")).lower()
-    brand = str(brand_name).lower()
+def normalize_product_name(name):
+    """
+    Customer ပြမယ့် Dia amount ကို normalize လုပ်တယ်။
 
-    text = f"{name} {type_name} {category} {brand}"
+    ဥပမာ:
+    78 + 8 Diamonds
+    78+8 Diamonds
+    78+8
+
+    => 78+8
+    """
+
+    name = clean_text(name)
+
+    name = re.sub(
+        r"(?i)\bdiamonds?\b",
+        "",
+        name,
+    )
+
+    name = name.replace(" ", "")
+
+    # 78+8, 78+8D etc.
+    match = re.search(
+        r"(\d+(?:\.\d+)?)\+(\d+(?:\.\d+)?)",
+        name,
+    )
+
+    if match:
+        a = match.group(1)
+        b = match.group(2)
+
+        def fmt(x):
+            try:
+                f = float(x)
+                if f.is_integer():
+                    return str(int(f))
+                return str(f)
+            except Exception:
+                return x
+
+        return f"{fmt(a)}+{fmt(b)}"
+
+    # 86 Diamonds
+    match = re.search(
+        r"(\d+(?:\.\d+)?)",
+        name,
+    )
+
+    if match:
+        value = match.group(1)
+
+        try:
+            f = float(value)
+
+            if f.is_integer():
+                return str(int(f))
+
+        except Exception:
+            pass
+
+        return value
+
+    return name
+
+
+def diamond_sort_key(product):
+    amount = product.get("amount", "")
+
+    match = re.search(
+        r"(\d+(?:\.\d+)?)",
+        str(amount),
+    )
+
+    if match:
+        try:
+            return float(match.group(1))
+        except Exception:
+            pass
+
+    return 999999999
+
+
+# =========================================================
+# MLBB DETECTION
+# =========================================================
+
+def is_mlbb_product(product):
+    text = " ".join(
+        [
+            clean_text(product.get("name")),
+            clean_text(product.get("type_name")),
+            clean_text(product.get("category_name")),
+            clean_text(product.get("server_name")),
+        ]
+    ).lower()
 
     return (
         "mobile legends" in text
+        or "mobile legend" in text
         or "mlbb" in text
-        or "ml diamonds" in text
     )
 
 
-def classify_server(product, brand_name=""):
-    name = str(product.get("name", "")).lower()
-    server_name = str(
-        product.get("server_name", "")
-    ).lower()
-    server_code = str(
-        product.get("server_code", "")
-    ).lower()
-    brand = str(brand_name).lower()
+# =========================================================
+# SERVER CLASSIFICATION
+# =========================================================
 
-    text = (
-        f"{name} "
-        f"{server_name} "
-        f"{server_code} "
-        f"{brand}"
-    )
+def classify_ml_server(product, brand_name=""):
+    """
+    S1/S2 ကို Global လို့ မခန့်မှန်းဘူး။
 
-    if (
-        "indonesia" in text
-        or "(id)" in text
-        or server_code.startswith("id")
-    ):
+    API ရဲ့ actual brand/server/name data ကို
+    အခြေခံပြီး ခွဲတယ်။
+    """
+
+    values = [
+        clean_text(product.get("name")),
+        clean_text(product.get("type_name")),
+        clean_text(product.get("server_name")),
+        clean_text(product.get("server_code")),
+        clean_text(brand_name),
+        clean_text(product.get("brand_name")),
+        clean_text(product.get("description")),
+    ]
+
+    text = " ".join(values).lower()
+
+    # Indonesia
+    indonesia_words = [
+        "indonesia",
+        "indonesian",
+        "(id)",
+        " id ",
+        "-id",
+        "_id",
+    ]
+
+    if any(word in text for word in indonesia_words):
         return "Indonesia"
 
-    if (
-        "malaysia" in text
-        or "(my)" in text
-        or server_code.startswith("my")
-    ):
+    # Malaysia
+    malaysia_words = [
+        "malaysia",
+        "malaysian",
+        "(my)",
+        " my ",
+        "-my",
+        "_my",
+    ]
+
+    if any(word in text for word in malaysia_words):
         return "Malaysia"
 
-    if (
-        "global" in text
-        or "worldwide" in text
-        or "international" in text
-        or "(gl)" in text
-        or server_code.startswith("gl")
-    ):
+    # Global
+    global_words = [
+        "global",
+        "worldwide",
+        "international",
+        "global server",
+        "(gl)",
+    ]
+
+    if any(word in text for word in global_words):
         return "Global"
 
     return None
 
 
-def extract_diamond_amount(name):
-    match = re.search(
-        r"([\d.,]+)\s*(?:diamonds?|dia)",
-        str(name),
-        re.IGNORECASE,
-    )
+# =========================================================
+# LOAD REGULAR PRICELIST
+# =========================================================
 
-    if not match:
-        return 999999999
+def load_all_ml_products():
+    """
+    Melostore regular pricelist ကို pagination နဲ့ယူတယ်။
 
-    raw = match.group(1)
-    raw = raw.replace(".", "")
-    raw = raw.replace(",", "")
-
-    try:
-        return int(raw)
-    except Exception:
-        return 999999999
-
-
-def load_all_ml_products(force=False):
-    now = time.time()
-
-    if (
-        not force
-        and PRICE_CACHE["products"]
-        and now - PRICE_CACHE["time"] < CACHE_SECONDS
-    ):
-        return PRICE_CACHE["products"]
+    limit = 1000
+    max pages = 30
+    """
 
     all_products = []
+
     cursor = None
 
     for _ in range(30):
@@ -212,213 +375,226 @@ def load_all_ml_products(force=False):
         if cursor:
             params["cursor"] = cursor
 
-        status, data = api_get(
+        data, error = api_get(
             "/api/v1/h2h/pricelists",
             params=params,
-            timeout=30,
         )
 
-        if status != 200 or not data.get("success"):
-            logger.error(
-                "Pricelist error: %s %s",
-                status,
-                data,
-            )
+        if error:
+            print("Pricelist error:", error)
+            break
+
+        if not data:
             break
 
         rows = data.get("data", [])
+
         meta = data.get("meta", {})
 
         brands = meta.get("brands", [])
-        brand_map = {}
 
-        for brand in brands:
-            try:
-                brand_map[
-                    int(brand.get("id"))
-                ] = brand.get("name", "")
-            except Exception:
-                pass
+        brand_map = {
+            str(x.get("id")): x.get("name", "")
+            for x in brands
+        }
 
         for product in rows:
 
-            if product.get("status") != "active":
+            if clean_text(product.get("status")).lower() != "active":
                 continue
 
-            brand_id = product.get("brand_id")
+            if not is_mlbb_product(product):
+                continue
 
-            try:
-                brand_name = brand_map.get(
-                    int(brand_id),
-                    "",
-                )
-            except Exception:
-                brand_name = ""
+            brand_name = brand_map.get(
+                str(product.get("brand_id")),
+                "",
+            )
 
-            if not is_mlbb_product(
+            server = classify_ml_server(
                 product,
                 brand_name,
-            ):
+            )
+
+            if not server:
                 continue
 
             item = dict(product)
 
-            item["_brand_name"] = brand_name
-
-            item["_server_label"] = classify_server(
-                product,
-                brand_name,
+            item["brand_name"] = brand_name
+            item["server"] = server
+            item["amount"] = normalize_product_name(
+                product.get("name", "")
             )
 
             all_products.append(item)
 
-        pagination = meta.get(
-            "pagination",
-            {},
-        )
+        pagination = meta.get("pagination", {})
 
         if not pagination.get("has_more"):
             break
 
-        next_cursor = pagination.get(
-            "next_cursor"
-        )
+        cursor = pagination.get("next_cursor")
 
-        if not next_cursor:
+        if not cursor:
             break
-
-        cursor = next_cursor
-
-        time.sleep(0.15)
-
-    PRICE_CACHE["products"] = all_products
-    PRICE_CACHE["time"] = time.time()
-
-    logger.info(
-        "Loaded %s MLBB products",
-        len(all_products),
-    )
 
     return all_products
 
-# =========================
-# KEYBOARDS
-# =========================
+
+# =========================================================
+# BUILD SERVER CACHE
+# =========================================================
+
+def refresh_products():
+    global PRODUCT_CACHE
+
+    products = load_all_ml_products()
+
+    grouped = {
+        "Global": [],
+        "Malaysia": [],
+        "Indonesia": [],
+    }
+
+    for product in products:
+        server = product.get("server")
+
+        if server in grouped:
+            grouped[server].append(product)
+
+    # Same amount duplicate တွေကို customer UI မှာ မပြ။
+    #
+    # အတူတူ amount ရှိရင် API cost နည်းတဲ့ active SKU
+    # တစ်ခုကိုရွေးထားမယ်။
+
+    for server in grouped:
+
+        unique = {}
+
+        for product in grouped[server]:
+
+            amount = product.get("amount")
+
+            if not amount:
+                continue
+
+            old = unique.get(amount)
+
+            if old is None:
+                unique[amount] = product
+                continue
+
+            try:
+                new_price = float(
+                    product.get("price", 999999999)
+                )
+            except Exception:
+                new_price = 999999999
+
+            try:
+                old_price = float(
+                    old.get("price", 999999999)
+                )
+            except Exception:
+                old_price = 999999999
+
+            if new_price < old_price:
+                unique[amount] = product
+
+        grouped[server] = sorted(
+            unique.values(),
+            key=diamond_sort_key,
+        )
+
+    PRODUCT_CACHE = grouped
+
+    print(
+        "Products:",
+        {k: len(v) for k, v in PRODUCT_CACHE.items()}
+    )
+
+    return PRODUCT_CACHE
+
+
+# =========================================================
+# PRICE DISPLAY
+# =========================================================
+
+def get_mmk_price(server, amount):
+    price = MMK_PRICES.get(server, {}).get(amount)
+
+    if price is None:
+        return None
+
+    try:
+        return int(price)
+    except Exception:
+        return price
+
+
+def format_mmk(price):
+    if price is None:
+        return "Price မသတ်မှတ်ရသေး"
+
+    try:
+        return f"{int(price):,} MMK"
+    except Exception:
+        return f"{price} MMK"
+
+
+# =========================================================
+# MAIN REPLY KEYBOARD
+# =========================================================
 
 def main_keyboard():
     return ReplyKeyboardMarkup(
         [
-            [KeyboardButton("💎 Diamonds")],
             [
-                KeyboardButton("💰 Balance"),
-                KeyboardButton("🔌 API Status"),
+                "💎 MLBB Diamonds",
+                "🔍 Check ML ID",
+            ],
+            [
+                "💰 Balance",
+                "🔌 API Status",
             ],
         ],
         resize_keyboard=True,
-        is_persistent=True,
     )
 
+
+# =========================================================
+# SERVER INLINE KEYBOARD
+# =========================================================
 
 def server_keyboard():
-    return ReplyKeyboardMarkup(
+    return InlineKeyboardMarkup(
         [
-            [KeyboardButton("🌎 Global Server")],
-            [KeyboardButton("🇲🇾 Malaysia Server")],
-            [KeyboardButton("🇮🇩 Indonesia Server")],
             [
-                KeyboardButton("🔙 Back"),
-                KeyboardButton("🏠 Home"),
+                InlineKeyboardButton(
+                    "🌍 Global Server",
+                    callback_data="server:Global",
+                )
             ],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
-
-
-def package_keyboard(products, context):
-    buttons = []
-    package_map = {}
-
-    for index, product in enumerate(products):
-
-        name = product.get(
-            "name",
-            "Diamonds",
-        )
-
-        price = product.get(
-            "price",
-            0,
-        )
-
-        try:
-            price_text = f"{float(price):,.0f}"
-        except Exception:
-            price_text = str(price)
-
-        button_text = (
-            f"💎 {name} • "
-            f"{price_text} MC"
-        )
-
-        if button_text in package_map:
-            button_text += f" #{index + 1}"
-
-        package_map[button_text] = product
-
-        buttons.append(
-            KeyboardButton(button_text)
-        )
-
-    context.user_data[
-        "package_map"
-    ] = package_map
-
-    keyboard = []
-
-    for i in range(0, len(buttons), 2):
-        keyboard.append(
-            buttons[i:i + 2]
-        )
-
-    keyboard.append(
-        [
-            KeyboardButton("🔙 Servers"),
-            KeyboardButton("🏠 Home"),
+            [
+                InlineKeyboardButton(
+                    "🇲🇾 Malaysia Server",
+                    callback_data="server:Malaysia",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🇮🇩 Indonesia Server",
+                    callback_data="server:Indonesia",
+                )
+            ],
         ]
     )
 
-    return ReplyKeyboardMarkup(
-        keyboard,
-        resize_keyboard=True,
-        is_persistent=True,
-    )
 
-
-def id_keyboard():
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("❌ Cancel")]
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
-
-
-def confirm_keyboard():
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton("✅ Confirm Order")],
-            [KeyboardButton("❌ Cancel")],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-    )
-
-
-# =========================
+# =========================================================
 # START
-# =========================
+# =========================================================
 
 async def start(
     update: Update,
@@ -430,9 +606,10 @@ async def start(
     text = (
         "✨ <b>Eren's Diamond Bot</b> ✨\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "💎 <b>MLBB Diamond Top-Up</b>\n\n"
+        "💎 MLBB Diamond Top-Up\n\n"
         "🛒 Choose your service:\n\n"
         "💎 Diamonds\n"
+        "🔍 Check ML ID\n"
         "💰 Balance\n"
         "🔌 API Status\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -446,82 +623,62 @@ async def start(
     )
 
 
-# =========================
+# =========================================================
 # BALANCE
-# =========================
+# =========================================================
 
-async def show_balance(update):
+async def show_balance(
+    update: Update,
+):
 
-    status, data = get_balance()
+    data, error = get_balance()
 
-    if (
-        status != 200
-        or not data.get("success")
-    ):
+    if error:
         await update.message.reply_text(
-            "❌ Balance မရယူနိုင်ပါ။\n\n"
-            "ခဏနေပြီး ပြန်စမ်းကြည့်ပါ။",
-            reply_markup=main_keyboard(),
+            "❌ Balance ရယူလို့မရပါဘူး။\n\n"
+            f"Error: {html.escape(str(error))}"
         )
         return
 
-    d = data.get(
-        "data",
-        data,
-    )
+    info = data.get("data", {})
 
-    mc = d.get(
+    balance = info.get(
         "h2h_balance",
         0,
     )
 
-    usd = d.get(
+    usd = info.get(
         "h2h_balance_usd",
         0,
     )
 
-    rate = d.get(
+    rate = info.get(
         "usd_idr_rate",
         0,
     )
 
-    sandbox = d.get(
+    sandbox = info.get(
         "is_sandbox_mode",
         False,
     )
 
-    try:
-        mc_text = f"{float(mc):,.2f}"
-    except Exception:
-        mc_text = str(mc)
-
-    try:
-        usd_text = f"${float(usd):,.2f}"
-    except Exception:
-        usd_text = str(usd)
-
-    try:
-        rate_text = f"{float(rate):,.0f}"
-    except Exception:
-        rate_text = str(rate)
-
     mode = (
         "🧪 Sandbox Mode"
         if sandbox
-        else "🚀 Production Mode"
+        else "🟢 Production Mode"
     )
 
     text = (
         "💰 <b>Bot Balance</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🪙 <b>MC Balance</b>\n"
-        f"{mc_text} MC\n\n"
-        "💵 <b>USD Value</b>\n"
-        f"{usd_text}\n\n"
-        "💱 <b>USD / IDR Rate</b>\n"
-        f"{rate_text}\n\n"
-        "⚙️ <b>Mode</b>\n"
-        f"{mode}\n\n"
+        f"🪙 MC Balance\n"
+        f"<b>{balance:,.2f} MC</b>\n\n"
+        f"💵 USD Value\n"
+        f"<b>${usd:,.2f}</b>\n\n"
+        f"💱 USD / IDR Rate\n"
+        f"<b>{rate:,.0f}</b>\n\n"
+        f"⚙️ Mode\n"
+        f"<b>{mode}</b>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🎴 Eren Shop"
     )
@@ -529,229 +686,221 @@ async def show_balance(update):
     await update.message.reply_text(
         text,
         parse_mode="HTML",
-        reply_markup=main_keyboard(),
     )
 
-
-# =========================
+# =========================================================
 # API STATUS
-# =========================
+# =========================================================
 
-async def show_api_status(update):
-
-    status, data = get_profile()
-
-    if (
-        status == 200
-        and data.get("success")
-    ):
-
-        d = data.get(
-            "data",
-            data,
-        )
-
-        sandbox = d.get(
-            "is_sandbox_mode",
-            d.get(
-                "sandbox_mode",
-                False,
-            ),
-        )
-
-        mode = (
-            "🧪 Sandbox"
-            if sandbox
-            else "🚀 Production"
-        )
-
-        text = (
-            "🔌 <b>API Status</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "🟢 API Connection: "
-            "<b>Online</b>\n"
-            f"⚙️ Mode: <b>{mode}</b>\n"
-            "🔐 Authentication: "
-            "<b>OK</b>\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "⚡ Powered by Eren"
-        )
-
-    else:
-
-        text = (
-            "🔌 <b>API Status</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "🔴 API Connection: "
-            "<b>Offline / Error</b>\n\n"
-            "ခဏနေပြီး ပြန်စမ်းကြည့်ပါ။"
-        )
-
-    await update.message.reply_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=main_keyboard(),
-    )
-
-
-# =========================
-# SERVER SELECTION
-# =========================
-
-async def show_servers(
-    update,
-    context,
+async def show_api_status(
+    update: Update,
 ):
 
-    context.user_data.clear()
+    data, error = get_profile()
+
+    if error:
+        await update.message.reply_text(
+            "🔴 <b>API Offline / Error</b>\n\n"
+            f"{html.escape(str(error))}",
+            parse_mode="HTML",
+        )
+        return
+
+    info = data.get("data", {})
+
+    tier = info.get("tier", {})
+
+    tier_name = tier.get(
+        "name",
+        "Unknown",
+    )
+
+    sandbox = info.get(
+        "is_sandbox_mode",
+        False,
+    )
+
+    status = (
+        "🧪 Sandbox Mode"
+        if sandbox
+        else "🟢 Production Mode"
+    )
 
     text = (
-        "🌍 <b>Choose Server</b>\n"
+        "🔌 <b>Melostore API Status</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🌎 Global Server\n"
-        "🇲🇾 Malaysia Server\n"
-        "🇮🇩 Indonesia Server\n\n"
-        "💡 Server အလိုက် Dia Package "
-        "နဲ့ Price သီးခြားစီပြပေးပါမယ်။\n\n"
+        "🟢 Connection: <b>Connected</b>\n"
+        f"🏷️ Tier: <b>{html.escape(str(tier_name))}</b>\n"
+        f"⚙️ Mode: <b>{status}</b>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "⚡ Powered by Eren"
     )
 
     await update.message.reply_text(
         text,
+        parse_mode="HTML",
+    )
+
+
+# =========================================================
+# MLBB SERVER PAGE
+# =========================================================
+
+async def open_mlbb(
+    update: Update,
+):
+
+    await update.message.reply_text(
+        "💎 <b>MLBB Diamond Top-Up</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🌍 Server ရွေးပါ။",
         parse_mode="HTML",
         reply_markup=server_keyboard(),
     )
 
 
-# =========================
-# SHOW PACKAGES
-# =========================
+# =========================================================
+# DIAMOND LIST MESSAGE
+# =========================================================
 
-async def show_packages(
-    update,
-    context,
-    server_label,
-):
+def build_amount_text(server):
 
-    await update.message.reply_text(
-        "⏳ <b>Dia Packages ရှာနေပါတယ်...</b>",
-        parse_mode="HTML",
+    products = PRODUCT_CACHE.get(
+        server,
+        [],
     )
 
-    products = load_all_ml_products()
+    if not products:
+        return (
+            f"💎 <b>{html.escape(server)} Server</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "❌ Diamond products မတွေ့ပါ။"
+        )
 
-    server_products = [
-        p for p in products
-        if p.get("_server_label")
-        == server_label
+    lines = [
+        f"💎 <b>{html.escape(server)} Server</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "💎 <b>Diamond Amounts</b>",
+        "",
     ]
 
-    server_products.sort(
-        key=lambda p: (
-            extract_diamond_amount(
-                p.get("name", "")
-            ),
-            float(
-                p.get("price", 0)
-                or 0
-            ),
+    for product in products:
+
+        amount = product.get(
+            "amount",
+            "?",
         )
+
+        price = get_mmk_price(
+            server,
+            amount,
+        )
+
+        lines.append(
+            f"💎 {html.escape(str(amount))} "
+            f"— <b>{format_mmk(price)}</b>"
+        )
+
+    lines.extend(
+        [
+            "",
+            "👇 အောက်က Button ကနေ Amount ရွေးပါ။",
+        ]
     )
 
-    if not server_products:
+    return "\n".join(lines)
 
-        await update.message.reply_text(
-            "⚠️ ဒီ Server အတွက် "
-            "Dia Package မတွေ့ပါ။\n\n"
-            "API ထဲက server/brand "
-            "name ကိုစစ်ဖို့လိုပါတယ်။",
-            reply_markup=server_keyboard(),
+
+# =========================================================
+# AMOUNT BUTTONS
+# =========================================================
+
+def amount_keyboard(server):
+
+    products = PRODUCT_CACHE.get(
+        server,
+        [],
+    )
+
+    buttons = []
+
+    row = []
+
+    for index, product in enumerate(products):
+
+        amount = product.get(
+            "amount",
+            "?",
         )
-        return
 
-    context.user_data[
-        "selected_server"
-    ] = server_label
+        button = InlineKeyboardButton(
+            f"💎 {amount}",
+            callback_data=f"amount:{server}:{index}",
+        )
 
-    context.user_data[
-        "stage"
-    ] = "select_package"
+        row.append(button)
+
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+
+    if row:
+        buttons.append(row)
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                "⬅️ Server ပြန်ရွေးမယ်",
+                callback_data="back:servers",
+            )
+        ]
+    )
+
+    return InlineKeyboardMarkup(buttons)
+
+
+# =========================================================
+# CHECK ID MAIN PAGE
+# =========================================================
+
+async def start_check_id(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    context.user_data.clear()
+
+    context.user_data["state"] = "check_id_player"
 
     text = (
-        f"💎 <b>{server_label} Server</b>\n"
+        "🔍 <b>MLBB ID Checker</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📦 <b>{len(server_products)}</b> "
-        "Packages Available\n\n"
-        "ကိုယ်လိုချင်တဲ့ Dia Amount "
-        "ကိုရွေးပါ 👇\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "⚡ Powered by Eren"
+        "🆔 <b>Player ID</b> ထည့်ပါ။\n\n"
+        "ဥပမာ:\n"
+        "<code>12345678</code>\n\n"
+        "❌ Cancel လုပ်ချင်ရင် /start"
     )
 
     await update.message.reply_text(
         text,
         parse_mode="HTML",
-        reply_markup=package_keyboard(
-            server_products,
-            context,
-        ),
     )
 
 
-# =========================
-# ASK PLAYER ID
-# =========================
+# =========================================================
+# CHECK ID → API
+# =========================================================
 
-async def ask_player_id(
-    update,
-    context,
-):
-
-    context.user_data[
-        "stage"
-    ] = "player_id"
-
-    await update.message.reply_text(
-        "🆔 <b>Player ID ထည့်ပါ</b>\n\n"
-        "ဥပမာ - <code>47486147</code>\n\n"
-        "Player ID ပဲထည့်ပါ။",
-        parse_mode="HTML",
-        reply_markup=id_keyboard(),
-    )
-
-
-async def ask_zone_id(
-    update,
-    context,
-):
-
-    context.user_data[
-        "stage"
-    ] = "zone_id"
-
-    await update.message.reply_text(
-        "🌐 <b>Zone ID ထည့်ပါ</b>\n\n"
-        "ဥပမာ - <code>2076</code>\n\n"
-        "Zone ID ပဲထည့်ပါ။",
-        parse_mode="HTML",
-        reply_markup=id_keyboard(),
-    )
-
-
-# =========================
-# NICKNAME CHECK
-# =========================
-
-def check_nickname(
+def check_ml_nickname(
     player_id,
     zone_id,
 ):
 
     payload = {
         "game_code": "mobile-legends",
-        "customer_target": player_id,
-        "customer_target_zone": zone_id,
+        "customer_target": str(player_id),
+        "customer_target_zone": str(zone_id),
     }
 
     return api_post(
@@ -760,726 +909,871 @@ def check_nickname(
     )
 
 
-# =========================
-# PURCHASE LIMIT
-# =========================
+# =========================================================
+# CHECK ID RESULT
+# =========================================================
 
-def check_purchase_limit(
-    player_id,
-    zone_id,
+async def process_check_id(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
 ):
 
-    payload = {
-        "customer_target": player_id,
-        "customer_target_zone": zone_id,
-    }
-
-    return api_post(
-        "/api/v1/h2h/mobile-legends/purchase-limit",
-        payload,
+    player_id = context.user_data.get(
+        "check_player_id"
     )
 
-# =========================
-# LIMIT CHECK
-# =========================
+    zone_id = update.message.text.strip()
 
-def limit_reached_for_product(
-    limit_data,
-    product,
-):
-    sku = str(
-        product.get("sku_code", "")
-    ).lower()
-
-    amount = extract_diamond_amount(
-        product.get("name", "")
-    )
-
-    items = []
-
-    weekly = limit_data.get(
-        "weekly_pass",
-        {},
-    )
-
-    double = limit_data.get(
-        "double_diamonds",
-        {},
-    )
-
-    items.extend(
-        weekly.get("items", [])
-        or []
-    )
-
-    items.extend(
-        double.get("items", [])
-        or []
-    )
-
-    for item in items:
-
-        code = str(
-            item.get(
-                "package_code",
-                "",
-            )
-        ).lower()
-
-        if not code:
-            continue
-
-        if (
-            code == sku
-            and item.get(
-                "limit_reached"
-            )
-        ):
-            return True
-
-        digits = re.findall(
-            r"\d+",
-            code,
-        )
-
-        if digits:
-            try:
-                if (
-                    int(digits[-1])
-                    == amount
-                    and item.get(
-                        "limit_reached"
-                    )
-                ):
-                    return True
-            except Exception:
-                pass
-
-    return False
-
-
-# =========================
-# CONFIRMATION
-# =========================
-
-async def show_confirmation(
-    update,
-    context,
-):
-
-    product = context.user_data.get(
-        "product"
-    )
-
-    if not product:
+    if not zone_id.isdigit():
         await update.message.reply_text(
-            "❌ Product session မတွေ့ပါ။",
-            reply_markup=main_keyboard(),
+            "❌ Zone ID မှာ နံပါတ်ပဲ ထည့်ပါ။\n\n"
+            "ဥပမာ: <code>2039</code>",
+            parse_mode="HTML",
         )
         return
 
-    server = context.user_data.get(
-        "selected_server",
-        "Unknown",
+    await update.message.reply_text(
+        "🔍 <b>Checking MLBB ID...</b>\n"
+        "ခဏစောင့်ပါ...",
+        parse_mode="HTML",
     )
 
-    player_id = context.user_data.get(
-        "player_id",
+    data, error = check_ml_nickname(
+        player_id,
+        zone_id,
+    )
+
+    if error:
+        await update.message.reply_text(
+            "❌ <b>Check ID Failed</b>\n\n"
+            f"{html.escape(str(error))}",
+            parse_mode="HTML",
+        )
+
+        context.user_data.clear()
+
+        return
+
+    info = data.get(
+        "data",
+        {},
+    )
+
+    # API response format က version အလိုက်
+    # field location နည်းနည်းကွာနိုင်လို့ fallback ထားထားတယ်။
+
+    nickname = (
+        info.get("username")
+        or info.get("nickname")
+        or info.get("name")
+        or "-"
+    )
+
+    region = (
+        info.get("region")
+        or info.get("region_name")
+        or "-"
+    )
+
+    region_type = info.get(
+        "region_type",
         "",
     )
 
-    zone_id = context.user_data.get(
-        "zone_id",
-        "",
+    billing = info.get(
+        "billing",
+        {},
     )
 
-    nickname = context.user_data.get(
-        "nickname",
-        "Unknown",
-    )
-
-    price = product.get(
-        "price",
+    charged_mc = billing.get(
+        "charged_mc",
         0,
     )
 
-    try:
-        price_text = f"{float(price):,.0f}"
-    except Exception:
-        price_text = str(price)
-
-    text = (
-        "🛒 <b>Confirm Order</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🌍 Server: <b>{server}</b>\n"
-        f"💎 Package: <b>{product.get('name')}</b>\n"
-        f"💰 Price: <b>{price_text} MC</b>\n\n"
-        f"🆔 Player ID: "
-        f"<code>{player_id}</code>\n"
-        f"🌐 Zone ID: "
-        f"<code>{zone_id}</code>\n"
-        f"👤 Nickname: "
-        f"<b>{nickname}</b>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "အချက်အလက်မှန်ကန်ရင် "
-        "Confirm လုပ်ပါ။"
+    free_remaining = billing.get(
+        "free_remaining_today",
+        0,
     )
 
-    context.user_data[
-        "stage"
-    ] = "confirm"
+    text = (
+        "🔍 <b>MLBB ID Result</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
+        f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
+        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n"
+        f"🌍 Region: <b>{html.escape(str(region))}</b>\n"
+    )
+
+    if region_type:
+        text += (
+            f"🏷️ Region Type: "
+            f"<b>{html.escape(str(region_type))}</b>\n"
+        )
+
+    text += (
+        "\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "✅ <b>ID Verified</b>"
+    )
+
+    # Billing ကို customer UI မှာ မပြဘူး။
+    # charged_mc / free_remaining_today က backend
+    # information အဖြစ်ပဲထားတယ်။
+
+    context.user_data.clear()
 
     await update.message.reply_text(
         text,
         parse_mode="HTML",
-        reply_markup=confirm_keyboard(),
     )
 
 
-# =========================
+# =========================================================
+# SERVER CALLBACK
+# =========================================================
+
+async def callback_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    query = update.callback_query
+
+    if not query:
+        return
+
+    await query.answer()
+
+    data = query.data or ""
+
+    # -----------------------------------------------------
+    # BACK TO SERVERS
+    # -----------------------------------------------------
+
+    if data == "back:servers":
+
+        await query.edit_message_text(
+            "💎 <b>MLBB Diamond Top-Up</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🌍 Server ရွေးပါ။",
+            parse_mode="HTML",
+            reply_markup=server_keyboard(),
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # SERVER SELECT
+    # -----------------------------------------------------
+
+    if data.startswith("server:"):
+
+        server = data.split(
+            ":",
+            1,
+        )[1]
+
+        if server not in (
+            "Global",
+            "Malaysia",
+            "Indonesia",
+        ):
+            await query.answer(
+                "❌ Invalid server",
+                show_alert=True,
+            )
+            return
+
+        # Product cache မရှိရင် refresh
+        if not PRODUCT_CACHE.get(server):
+
+            await query.edit_message_text(
+                "⏳ <b>Loading Diamond Products...</b>",
+                parse_mode="HTML",
+            )
+
+            refresh_products()
+
+        products = PRODUCT_CACHE.get(
+            server,
+            [],
+        )
+
+        if not products:
+
+            await query.edit_message_text(
+                f"❌ <b>{html.escape(server)} Server</b>\n\n"
+                "ဒီ server အတွက် MLBB product မတွေ့ပါ။",
+                parse_mode="HTML",
+                reply_markup=server_keyboard(),
+            )
+
+            return
+
+        text = build_amount_text(
+            server
+        )
+
+        await query.edit_message_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=amount_keyboard(server),
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # AMOUNT SELECT
+    # -----------------------------------------------------
+
+    if data.startswith("amount:"):
+
+        parts = data.split(":")
+
+        if len(parts) != 3:
+            return
+
+        server = parts[1]
+
+        try:
+            index = int(parts[2])
+        except Exception:
+            return
+
+        products = PRODUCT_CACHE.get(
+            server,
+            [],
+        )
+
+        if index < 0 or index >= len(products):
+            await query.answer(
+                "❌ Product မတွေ့ပါ။",
+                show_alert=True,
+            )
+            return
+
+        product = products[index]
+
+        context.user_data["server"] = server
+        context.user_data["product"] = product
+
+        amount = product.get(
+            "amount",
+            "?",
+        )
+
+        price = get_mmk_price(
+            server,
+            amount,
+        )
+
+        sku = product.get(
+            "sku_code",
+            "",
+        )
+
+        context.user_data["sku"] = sku
+
+        price_text = format_mmk(price)
+
+        text = (
+            "💎 <b>Selected Product</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🌍 Server: <b>{html.escape(server)}</b>\n"
+            f"💎 Amount: <b>{html.escape(str(amount))}</b>\n"
+            f"💰 Price: <b>{html.escape(price_text)}</b>\n\n"
+            "🆔 <b>Player ID</b> ထည့်ပါ။\n"
+            "ဥပမာ: <code>12345678</code>"
+        )
+
+        context.user_data["state"] = (
+            "order_player_id"
+        )
+
+        await query.edit_message_text(
+            text,
+            parse_mode="HTML",
+        )
+
+        return
+
+# =========================================================
+# ORDER → CHECK NICKNAME
+# =========================================================
+
+async def process_order_player_id(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    player_id = update.message.text.strip()
+
+    if not player_id.isdigit():
+        await update.message.reply_text(
+            "❌ Player ID မှာ နံပါတ်ပဲ ထည့်ပါ။"
+        )
+        return
+
+    context.user_data["player_id"] = player_id
+    context.user_data["state"] = "order_zone_id"
+
+    await update.message.reply_text(
+        "🌐 <b>Zone ID</b> ထည့်ပါ။\n\n"
+        "ဥပမာ: <code>2039</code>",
+        parse_mode="HTML",
+    )
+
+
+# =========================================================
+# ORDER → ZONE ID
+# =========================================================
+
+async def process_order_zone_id(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    zone_id = update.message.text.strip()
+
+    if not zone_id.isdigit():
+        await update.message.reply_text(
+            "❌ Zone ID မှာ နံပါတ်ပဲ ထည့်ပါ။"
+        )
+        return
+
+    player_id = context.user_data.get(
+        "player_id"
+    )
+
+    context.user_data["zone_id"] = zone_id
+
+    await update.message.reply_text(
+        "🔍 <b>Checking Nickname...</b>\n"
+        "ခဏစောင့်ပါ...",
+        parse_mode="HTML",
+    )
+
+    data, error = check_ml_nickname(
+        player_id,
+        zone_id,
+    )
+
+    if error:
+        await update.message.reply_text(
+            "❌ <b>ID Check Failed</b>\n\n"
+            f"{html.escape(str(error))}",
+            parse_mode="HTML",
+        )
+
+        context.user_data.clear()
+
+        return
+
+    info = data.get(
+        "data",
+        {},
+    )
+
+    nickname = (
+        info.get("username")
+        or info.get("nickname")
+        or info.get("name")
+        or "-"
+    )
+
+    context.user_data["nickname"] = nickname
+
+    server = context.user_data.get(
+        "server",
+        "Global",
+    )
+
+    product = context.user_data.get(
+        "product",
+        {},
+    )
+
+    amount = product.get(
+        "amount",
+        "?",
+    )
+
+    price = get_mmk_price(
+        server,
+        amount,
+    )
+
+    price_text = format_mmk(price)
+
+    text = (
+        "🔍 <b>Account Verified</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
+        f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
+        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🌍 Server: <b>{html.escape(server)}</b>\n"
+        f"💎 Diamond: <b>{html.escape(str(amount))}</b>\n"
+        f"💰 Price: <b>{html.escape(price_text)}</b>\n\n"
+        "အချက်အလက်မှန်ကန်ရင် Order တင်နိုင်ပါတယ်။"
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "✅ Confirm Order",
+                    callback_data="order:confirm",
+                ),
+                InlineKeyboardButton(
+                    "❌ Cancel",
+                    callback_data="order:cancel",
+                ),
+            ]
+        ]
+    )
+
+    context.user_data["state"] = (
+        "order_confirm"
+    )
+
+    await update.message.reply_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
+
+
+# =========================================================
 # CREATE TRANSACTION
-# =========================
+# =========================================================
 
 def create_transaction(
     product,
     player_id,
     zone_id,
-    buyer_trx_id,
 ):
 
+    sku = product.get(
+        "sku_code"
+    )
+
+    buyer_trx_id = (
+        "EREN-"
+        + uuid.uuid4().hex[:20].upper()
+    )
+
     payload = {
-        "sku_code": product.get(
-            "sku_code"
-        ),
-        "customer_target": player_id,
-        "customer_target_zone": zone_id,
+        "sku_code": sku,
+        "customer_target": str(player_id),
+        "customer_target_zone": str(zone_id),
         "buyer_trx_id": buyer_trx_id,
+        "sandbox_mode": MELO_SANDBOX,
     }
 
     return api_post(
         "/api/v1/h2h/transaction",
         payload,
-        timeout=40,
     )
 
 
-# =========================
-# TRANSACTION STATUS
-# =========================
+# =========================================================
+# CONFIRM ORDER
+# =========================================================
 
-def get_transaction_status(
-    transaction_id,
+async def confirm_order(
+    query,
+    context,
 ):
 
-    return api_get(
-        f"/api/v1/h2h/transaction/{transaction_id}",
-        timeout=20,
+    server = context.user_data.get(
+        "server"
     )
 
+    product = context.user_data.get(
+        "product"
+    )
 
-# =========================
-# MESSAGE HANDLER
-# =========================
+    player_id = context.user_data.get(
+        "player_id"
+    )
 
-async def message_handler(
+    zone_id = context.user_data.get(
+        "zone_id"
+    )
+
+    nickname = context.user_data.get(
+        "nickname",
+        "-",
+    )
+
+    if not product or not player_id or not zone_id:
+        await query.edit_message_text(
+            "❌ Order information မပြည့်စုံပါ။\n"
+            "/start နဲ့ ပြန်စပါ။"
+        )
+
+        context.user_data.clear()
+
+        return
+
+    amount = product.get(
+        "amount",
+        "?",
+    )
+
+    price = get_mmk_price(
+        server,
+        amount,
+    )
+
+    # MMK price မသတ်မှတ်ရသေးရင်
+    # မတော်တဆ order မတင်အောင် block လုပ်ထားတယ်။
+
+    if price is None:
+
+        await query.edit_message_text(
+            "⚠️ <b>Price မသတ်မှတ်ရသေးပါ။</b>\n\n"
+            f"💎 {html.escape(str(amount))}\n"
+            f"🌍 {html.escape(str(server))}\n\n"
+            "Admin က MMK price ထည့်ပြီးမှ "
+            "order တင်နိုင်ပါမယ်။",
+            parse_mode="HTML",
+        )
+
+        context.user_data.clear()
+
+        return
+
+    await query.edit_message_text(
+        "🛒 <b>Creating Order...</b>\n"
+        "ခဏစောင့်ပါ...",
+        parse_mode="HTML",
+    )
+
+    data, error = create_transaction(
+        product,
+        player_id,
+        zone_id,
+    )
+
+    if error:
+
+        await query.edit_message_text(
+            "❌ <b>Order Failed</b>\n\n"
+            f"{html.escape(str(error))}",
+            parse_mode="HTML",
+        )
+
+        context.user_data.clear()
+
+        return
+
+    result = data.get(
+        "data",
+        {},
+    )
+
+    transaction_id = result.get(
+        "id",
+        "-"
+    )
+
+    status = result.get(
+        "status",
+        "pending",
+    )
+
+    text = (
+        "🛒 <b>Order Created</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
+        f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
+        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
+        f"🌍 Server: <b>{html.escape(str(server))}</b>\n"
+        f"💎 Diamond: <b>{html.escape(str(amount))}</b>\n"
+        f"💰 Price: <b>{format_mmk(price)}</b>\n\n"
+        f"🆔 Transaction: <code>{html.escape(str(transaction_id))}</code>\n"
+        f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "⚡ Powered by Eren"
+    )
+
+    await query.edit_message_text(
+        text,
+        parse_mode="HTML",
+    )
+
+    context.user_data.clear()
+
+
+# =========================================================
+# CALLBACK CONTINUE
+# =========================================================
+
+async def handle_callback_actions(
+    update,
+    context,
+):
+
+    query = update.callback_query
+    data = query.data or ""
+
+    # Confirm
+    if data == "order:confirm":
+
+        await query.answer(
+            "Order တင်နေပါတယ်..."
+        )
+
+        await confirm_order(
+            query,
+            context,
+        )
+
+        return True
+
+    # Cancel
+    if data == "order:cancel":
+
+        context.user_data.clear()
+
+        await query.edit_message_text(
+            "❌ <b>Order Cancelled</b>\n\n"
+            "/start နဲ့ Main Menu ပြန်သွားနိုင်ပါတယ်။",
+            parse_mode="HTML",
+        )
+
+        return True
+
+    return False
+
+
+# =========================================================
+# COMBINED CALLBACK HANDLER
+# =========================================================
+
+async def callback_router(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
-    if (
-        not update.message
-        or not update.message.text
-    ):
+    query = update.callback_query
+
+    if not query:
+        return
+
+    data = query.data or ""
+
+    if data.startswith("order:"):
+
+        handled = await handle_callback_actions(
+            update,
+            context,
+        )
+
+        if handled:
+            return
+
+    await callback_handler(
+        update,
+        context,
+    )
+
+
+# =========================================================
+# TEXT HANDLER
+# =========================================================
+
+async def text_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    if not update.message:
         return
 
     text = update.message.text.strip()
 
-    stage = context.user_data.get(
-        "stage",
-        "",
-    )
-
+    # -----------------------------------------------------
     # MAIN MENU
-    if text == "💎 Diamonds":
+    # -----------------------------------------------------
 
-        await show_servers(
+    if text == "💎 MLBB Diamonds":
+
+        await open_mlbb(update)
+
+        return
+
+    if text == "🔍 Check ML ID":
+
+        await start_check_id(
             update,
             context,
         )
+
         return
 
     if text == "💰 Balance":
 
         await show_balance(update)
+
         return
 
     if text == "🔌 API Status":
 
         await show_api_status(update)
+
         return
 
-    if text == "🏠 Home":
+    # -----------------------------------------------------
+    # CHECK ID FLOW
+    # -----------------------------------------------------
 
-        context.user_data.clear()
+    state = context.user_data.get(
+        "state"
+    )
 
-        await start(
-            update,
-            context,
-        )
-        return
-
-    # BACK
-    if text == "🔙 Back":
-
-        await start(
-            update,
-            context,
-        )
-        return
-
-    if text == "🔙 Servers":
-
-        await show_servers(
-            update,
-            context,
-        )
-        return
-
-    # SERVERS
-    if text == "🌎 Global Server":
-
-        await show_packages(
-            update,
-            context,
-            "Global",
-        )
-        return
-
-    if text == "🇲🇾 Malaysia Server":
-
-        await show_packages(
-            update,
-            context,
-            "Malaysia",
-        )
-        return
-
-    if text == "🇮🇩 Indonesia Server":
-
-        await show_packages(
-            update,
-            context,
-            "Indonesia",
-        )
-        return
-
-    # CANCEL
-    if text == "❌ Cancel":
-
-        context.user_data.clear()
-
-        await update.message.reply_text(
-            "❌ <b>Order Cancelled</b>",
-            parse_mode="HTML",
-            reply_markup=main_keyboard(),
-        )
-        return
-
-    # PACKAGE
-    if stage == "select_package":
-
-        package_map = context.user_data.get(
-            "package_map",
-            {},
-        )
-
-        product = package_map.get(text)
-
-        if not product:
-            return
-
-        context.user_data[
-            "product"
-        ] = product
-
-        await ask_player_id(
-            update,
-            context,
-        )
-        return
-
-    # PLAYER ID
-    if stage == "player_id":
+    if state == "check_id_player":
 
         if not text.isdigit():
 
             await update.message.reply_text(
-                "❌ Player ID က "
-                "နံပါတ်ပဲ ဖြစ်ရပါမယ်။\n\n"
-                "ဥပမာ - "
-                "<code>47486147</code>",
-                parse_mode="HTML",
-                reply_markup=id_keyboard(),
+                "❌ Player ID မှာ နံပါတ်ပဲ ထည့်ပါ။"
             )
+
             return
 
         context.user_data[
-            "player_id"
+            "check_player_id"
         ] = text
 
-        await ask_zone_id(
-            update,
-            context,
+        context.user_data[
+            "state"
+        ] = "check_id_zone"
+
+        await update.message.reply_text(
+            "🌐 <b>Zone ID</b> ထည့်ပါ။\n\n"
+            "ဥပမာ: <code>2039</code>",
+            parse_mode="HTML",
         )
+
         return
 
-    # ZONE ID
-    if stage == "zone_id":
+    if state == "check_id_zone":
 
-        if not text.isalnum():
-
-            await update.message.reply_text(
-                "❌ Zone ID မမှန်ပါ။\n\n"
-                "ဥပမာ - <code>2076</code>",
-                parse_mode="HTML",
-                reply_markup=id_keyboard(),
-            )
-            return
-
-        context.user_data[
-            "zone_id"
-        ] = text
-
-        await update.message.reply_text(
-            "🔍 <b>Nickname စစ်နေပါတယ်...</b>",
-            parse_mode="HTML",
-        )
-
-        player_id = context.user_data[
-            "player_id"
-        ]
-
-        status, data = check_nickname(
-            player_id,
-            text,
-        )
-
-        if (
-            status != 200
-            or not data.get("success")
-        ):
-
-            message = data.get(
-                "message",
-                "Nickname check failed",
-            )
-
-            await update.message.reply_text(
-                "❌ <b>Nickname Check Failed</b>\n\n"
-                f"{message}\n\n"
-                "Player ID / Zone ID "
-                "ကို ပြန်စစ်ပါ။",
-                parse_mode="HTML",
-                reply_markup=id_keyboard(),
-            )
-
-            context.user_data[
-                "stage"
-            ] = "player_id"
-
-            return
-
-        d = data.get(
-            "data",
-            {},
-        )
-
-        nickname = d.get(
-            "username",
-            "Unknown",
-        )
-
-        region = d.get(
-            "region",
-            "-",
-        )
-
-        context.user_data[
-            "nickname"
-        ] = nickname
-
-        context.user_data[
-            "region"
-        ] = region
-
-        # PURCHASE LIMIT
-        await update.message.reply_text(
-            "📋 <b>Purchase Limit စစ်နေပါတယ်...</b>",
-            parse_mode="HTML",
-        )
-
-        limit_status, limit_response = (
-            check_purchase_limit(
-                player_id,
-                text,
-            )
-        )
-
-        if (
-            limit_status != 200
-            or not limit_response.get(
-                "success"
-            )
-        ):
-
-            await update.message.reply_text(
-                "⚠️ Purchase Limit "
-                "စစ်မရပါ။\n\n"
-                "ခဏနေပြီး ပြန်စမ်းပါ။",
-                reply_markup=main_keyboard(),
-            )
-
-            context.user_data.clear()
-
-            return
-
-        limit_data = limit_response.get(
-            "data",
-            {},
-        )
-
-        product = context.user_data.get(
-            "product"
-        )
-
-        if limit_reached_for_product(
-            limit_data,
-            product,
-        ):
-
-            await update.message.reply_text(
-                "❌ <b>Purchase Limit Reached</b>\n\n"
-                f"👤 Nickname: "
-                f"<b>{nickname}</b>\n"
-                f"🌍 Region: "
-                f"<b>{region}</b>\n\n"
-                "ဒီ Package ကို "
-                "လက်ရှိဝယ်လို့မရပါ။",
-                parse_mode="HTML",
-                reply_markup=main_keyboard(),
-            )
-
-            context.user_data.clear()
-
-            return
-
-        await show_confirmation(
+        await process_check_id(
             update,
             context,
         )
 
         return
 
-    # CONFIRM ORDER
-    if text == "✅ Confirm Order":
+    # -----------------------------------------------------
+    # ORDER FLOW
+    # -----------------------------------------------------
 
-        if stage != "confirm":
-            return
+    if state == "order_player_id":
 
-        product = context.user_data.get(
-            "product"
+        await process_order_player_id(
+            update,
+            context,
         )
-
-        player_id = context.user_data.get(
-            "player_id"
-        )
-
-        zone_id = context.user_data.get(
-            "zone_id"
-        )
-
-        if (
-            not product
-            or not player_id
-            or not zone_id
-        ):
-
-            await update.message.reply_text(
-                "❌ Order information "
-                "မပြည့်စုံပါ။",
-                reply_markup=main_keyboard(),
-            )
-
-            context.user_data.clear()
-
-            return
-
-        user_id = update.effective_user.id
-        timestamp = int(time.time())
-
-        buyer_trx_id = (
-            f"eren_{user_id}_{timestamp}"
-        )
-
-        await update.message.reply_text(
-            "🛒 <b>Order တင်နေပါတယ်...</b>\n\n"
-            "⏳ ကျေးဇူးပြုပြီး ခဏစောင့်ပါ။",
-            parse_mode="HTML",
-        )
-
-        status, data = create_transaction(
-            product,
-            player_id,
-            zone_id,
-            buyer_trx_id,
-        )
-
-        if status not in (200, 201):
-
-            message = data.get(
-                "message",
-                "Transaction failed",
-            )
-
-            await update.message.reply_text(
-                "❌ <b>Order Failed</b>\n\n"
-                f"{message}",
-                parse_mode="HTML",
-                reply_markup=main_keyboard(),
-            )
-
-            context.user_data.clear()
-
-            return
-
-        if not data.get(
-            "success",
-            True,
-        ):
-
-            await update.message.reply_text(
-                "❌ <b>Order Failed</b>\n\n"
-                f"{data.get('message', 'Unknown error')}",
-                parse_mode="HTML",
-                reply_markup=main_keyboard(),
-            )
-
-            context.user_data.clear()
-
-            return
-
-        transaction = data.get(
-            "data",
-            data,
-        )
-
-        transaction_id = transaction.get(
-            "id",
-            buyer_trx_id,
-        )
-
-        product_name = product.get(
-            "name",
-            "MLBB Diamonds",
-        )
-
-        nickname = context.user_data.get(
-            "nickname",
-            "-",
-        )
-
-        await update.message.reply_text(
-            "✅ <b>Order Created</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"💎 {product_name}\n"
-            f"👤 {nickname}\n"
-            f"🆔 Player ID: "
-            f"<code>{player_id}</code>\n"
-            f"🌐 Zone ID: "
-            f"<code>{zone_id}</code>\n"
-            f"🧾 Order ID: "
-            f"<code>{buyer_trx_id}</code>\n\n"
-            "⏳ <b>Status: Pending</b>\n\n"
-            "⚡ Powered by Eren",
-            parse_mode="HTML",
-            reply_markup=main_keyboard(),
-        )
-
-        # Immediate status check
-        time.sleep(1)
-
-        check_status, check_data = (
-            get_transaction_status(
-                transaction_id
-            )
-        )
-
-        if (
-            check_status == 200
-            and check_data.get("success")
-        ):
-
-            td = check_data.get(
-                "data",
-                {},
-            )
-
-            final_status = td.get(
-                "status",
-                "pending",
-            )
-
-            if final_status == "success":
-
-                serial = td.get(
-                    "serial_number",
-                    "-",
-                )
-
-                await update.message.reply_text(
-                    "🎉 <b>TOP-UP SUCCESS</b>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"💎 {product_name}\n"
-                    f"👤 {nickname}\n"
-                    f"🆔 <code>{player_id}</code>\n"
-                    f"🌐 <code>{zone_id}</code>\n\n"
-                    f"🎫 Serial: "
-                    f"<code>{serial}</code>\n\n"
-                    "⚡ Powered by Eren",
-                    parse_mode="HTML",
-                    reply_markup=main_keyboard(),
-                )
-
-            elif final_status == "failed":
-
-                error_message = td.get(
-                    "message",
-                    "Transaction failed",
-                )
-
-                await update.message.reply_text(
-                    "❌ <b>TOP-UP FAILED</b>\n\n"
-                    f"{error_message}\n\n"
-                    "⚡ Powered by Eren",
-                    parse_mode="HTML",
-                    reply_markup=main_keyboard(),
-                )
-
-        context.user_data.clear()
 
         return
 
+    if state == "order_zone_id":
 
-# =========================
+        await process_order_zone_id(
+            update,
+            context,
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # UNKNOWN
+    # -----------------------------------------------------
+
+    await update.message.reply_text(
+        "❓ Menu ကနေရွေးပေးပါ။",
+        reply_markup=main_keyboard(),
+    )
+
+
+# =========================================================
+# COMMANDS
+# =========================================================
+
+async def help_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    text = (
+        "📖 <b>Help</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "💎 MLBB Diamonds — Diamond Top-Up\n"
+        "🔍 Check ML ID — Nickname စစ်ရန်\n"
+        "💰 Balance — API Balance\n"
+        "🔌 API Status — API Connection\n\n"
+        "/start — Main Menu"
+    )
+
+    await update.message.reply_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=main_keyboard(),
+    )
+
+
+# =========================================================
+# ERROR HANDLER
+# =========================================================
+
+async def error_handler(
+    update,
+    context,
+):
+
+    print(
+        "BOT ERROR:",
+        context.error,
+    )
+
+
+# =========================================================
 # MAIN
-# =========================
+# =========================================================
 
 def main():
 
+    if not BOT_TOKEN:
+        raise RuntimeError(
+            "BOT_TOKEN မတွေ့ပါ။ Railway Variables မှာ BOT_TOKEN ထည့်ပါ။"
+        )
+
+    if not MELO_API_KEY:
+        print(
+            "⚠️ MELO_API_KEY မတွေ့ပါ။"
+        )
+
+    if not MELO_SECRET_KEY:
+        print(
+            "⚠️ MELO_SECRET_KEY မတွေ့ပါ။"
+        )
+
     print(
-        "🤖 Eren's Diamond Bot "
-        "is starting..."
+        "🤖 Eren's Diamond Bot is starting..."
     )
+
+    print(
+        "🧪 Sandbox:",
+        MELO_SANDBOX,
+    )
+
+    # Startup မှာ products မဆွဲသေးဘူး။
+    # Server ရွေးတဲ့အချိန်မှ API ကိုခေါ်မယ်။
 
     app = (
         Application.builder()
@@ -1487,6 +1781,7 @@ def main():
         .build()
     )
 
+    # Commands
     app.add_handler(
         CommandHandler(
             "start",
@@ -1495,11 +1790,30 @@ def main():
     )
 
     app.add_handler(
+        CommandHandler(
+            "help",
+            help_command,
+        )
+    )
+
+    # Inline buttons
+    app.add_handler(
+        CallbackQueryHandler(
+            callback_router,
+        )
+    )
+
+    # Reply keyboard / text
+    app.add_handler(
         MessageHandler(
             filters.TEXT
             & ~filters.COMMAND,
-            message_handler,
+            text_handler,
         )
+    )
+
+    app.add_error_handler(
+        error_handler
     )
 
     print(
