@@ -31,7 +31,7 @@ MELO_API_KEY = os.getenv("MELO_API_KEY", "")
 MELO_SECRET_KEY = os.getenv("MELO_SECRET_KEY", "")
 MELO_BASE_URL = "https://api.melostore.id"
 
-# Railway မှာ true ထားချင်ရင် MELO_SANDBOX=true
+# Sandbox Mode (true/false)
 MELO_SANDBOX = os.getenv("MELO_SANDBOX", "true").lower() == "true"
 
 # =========================================================
@@ -191,9 +191,9 @@ async def handle_access_callback(update, context):
 # ဒီနေရာမှာ မင်းရောင်းမယ့် MMK price တွေ ထည့်မယ်။
 # ဥပမာ:
 # MMK_PRICES = {
-#     "Global": {"1.045": 5000, "10.45": 50000},
-#     "Malaysia": {"1.045": 5200},
-#     "Indonesia": {"1.045": 5500},
+#     "Global": {"78+8": 5000, "86": 5600},
+#     "Malaysia": {"78+8": 5200},
+#     "Indonesia": {"78+8": 5500},
 # }
 
 MMK_PRICES = {
@@ -210,13 +210,6 @@ LAST_PRODUCTS_LOAD = 0
 PRODUCT_CACHE_TTL = 300  # 5 မိနစ်
 PRODUCT_LOAD_LOCK = threading.Lock()
 PRODUCT_LAST_ERROR = {}
-
-# Server Code Mapping (Melostore API အရ)
-SERVER_API_CODE = {
-    "Global": "Legacy",
-    "Malaysia": "MY",
-    "Indonesia": "ID",
-}
 
 # =========================================================
 # API HELPERS
@@ -326,20 +319,18 @@ def _dedupe_products(products):
     return sorted(unique.values(), key=diamond_sort_key)
 
 # =========================================================
-# LOAD PRODUCTS FROM API (အဓိက ပြင်ဆင်ထားတဲ့နေရာ)
+# LOAD PRODUCTS FROM API (Support ရဲ့ အကြံပြုချက်အတိုင်း)
 # =========================================================
 def load_server_products(server):
     """
     Melostore H2H API မှ MLBB Products များကို ဆွဲထုတ်ပါ။
-    Documentation အရ Endpoint = /api/v1/h2h/pricelists
-    Server Code = Legacy (Global), MY (Malaysia), ID (Indonesia)
+    Support ရဲ့ အကြံပြုချက်အရ -
+    1. game_code ကို လုံးဝ မသုံးပါ။
+    2. limit=1000 ပဲ သုံးပါ။
+    3. meta.brands ထဲက brand_id နဲ့ Filter လုပ်ပါ။
     """
-    api_server = SERVER_API_CODE.get(server)
-    if not api_server:
-        return [], "Invalid server"
-
+    # game_code ကို လုံးဝ ဖျက်ထားပါတယ်။ limit ပဲ ထားပါတယ်။
     params = {
-        "server": api_server,
         "limit": 1000
     }
     
@@ -364,32 +355,43 @@ def load_server_products(server):
         brand_id = str(product.get("brand_id", ""))
         brand_name = brand_map.get(brand_id, "")
         
-        # Brand Name ထဲမှာ "Mobile Legends" ပါမပါ စစ်ပါ
+        # Brand Name ကို စစ်ပါ
         brand_text = f"{brand_name} {product.get('name', '')} {product.get('type_name', '')}".lower()
         
+        # MLBB Product ဟုတ်မဟုတ် စစ်ပါ
         is_mlbb = (
             "mobile legends" in brand_text or
             "mobile legend" in brand_text or
-            "mlbb" in brand_text or
-            "ml " in brand_text
+            "mlbb" in brand_text
         )
         
         if not is_mlbb:
             continue
-            
-        item = dict(product)
-        item["server"] = server
-        item["brand_name"] = brand_name
-        item["amount"] = normalize_product_name(product.get("name", ""))
-        if item["amount"]:
-            products.append(item)
+        
+        # Server ကို Brand Name ကနေ ခွဲထုတ်ပါ
+        product_server = None
+        if "indonesia" in brand_text:
+            product_server = "Indonesia"
+        elif "malaysia" in brand_text:
+            product_server = "Malaysia"
+        elif "global" in brand_text or "legacy" in brand_text:
+            product_server = "Global"
+        
+        # သင့် Bot က ရွေးထားတဲ့ Server နဲ့ တူမှသာ ထည့်ပါ
+        if product_server == server:
+            item = dict(product)
+            item["server"] = server
+            item["brand_name"] = brand_name
+            item["amount"] = normalize_product_name(product.get("name", ""))
+            if item["amount"]:
+                products.append(item)
 
     print(f"✅ Filtered {len(products)} MLBB products for {server}")
     return _dedupe_products(products), None
 
 def refresh_products(server=None, force=False):
     global PRODUCT_CACHE, LAST_PRODUCTS_LOAD
-    servers = [server] if server else list(SERVER_API_CODE.keys())
+    servers = [server] if server else list(PRODUCT_CACHE.keys())
     now = time.time()
 
     with PRODUCT_LOAD_LOCK:
@@ -458,7 +460,17 @@ def amount_keyboard(server):
     products = PRODUCT_CACHE.get(server, [])
     buttons = []
     row = []
-    for index, product in enumerate(products):
+    seen_amounts = set()
+    unique_products = []
+    
+    for product in products:
+        amount = product.get("amount", "?")
+        if amount in seen_amounts:
+            continue
+        seen_amounts.add(amount)
+        unique_products.append(product)
+    
+    for index, product in enumerate(unique_products):
         amount = product.get("amount", "?")
         button = InlineKeyboardButton(f"💎 {amount}", callback_data=f"amount:{server}:{index}")
         row.append(button)
@@ -758,7 +770,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         products, load_error = ensure_server_products(server)
 
         if not products:
-            # Error Message ကို အတိုချုံးပြပါ (Message_too_long မဖြစ်အောင်)
             error_msg = str(load_error)[:150] if load_error else "Pricelist empty ဖြစ်နေပါတယ်။"
             await query.edit_message_text(
                 f"❌ <b>{html.escape(server)} Server</b>\n\n"
@@ -774,14 +785,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💎 <b>{html.escape(server)} Server</b>",
             "━━━━━━━━━━━━━━━━━━━━",
             "",
-            "💎 <b>Diamond Amounts</b>",
+            f"📦 {len(products)} Packages Available",
             "",
+            "👇 အောက်က Button ကနေ Amount ရွေးပါ။",
         ]
-        for product in products:
-            amount = product.get("amount", "?")
-            price = get_mmk_price(server, amount)
-            lines.append(f"💎 {html.escape(str(amount))} — <b>{format_mmk(price)}</b>")
-        lines.extend(["", "👇 အောက်က Button ကနေ Amount ရွေးပါ။"])
 
         await query.edit_message_text(
             "\n".join(lines),
