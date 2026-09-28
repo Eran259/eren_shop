@@ -2,6 +2,7 @@ import os
 import re
 import uuid
 import html
+import sqlite3
 import requests
 from collections import defaultdict
 
@@ -32,35 +33,348 @@ MELO_SECRET_KEY = os.getenv("MELO_SECRET_KEY", "")
 
 MELO_BASE_URL = "https://api.melostore.id"
 
-# Railway မှာ true ထားချင်ရင်
-# MELO_SANDBOX=true
-MELO_SANDBOX = os.getenv("MELO_SANDBOX", "true").lower() == "true"
+MELO_SANDBOX = os.getenv(
+    "MELO_SANDBOX",
+    "true"
+).lower() == "true"
+
+
+# =========================================================
+# BOT ACCESS CONTROL
+# =========================================================
+
+ADMIN_ID = 5698123475
+ACCESS_DB = "access.db"
+
+
+def init_access_db():
+    conn = sqlite3.connect(ACCESS_DB)
+
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS bot_access (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            requested_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )"""
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_access_status(user_id):
+
+    if int(user_id) == ADMIN_ID:
+        return "approved"
+
+    conn = sqlite3.connect(ACCESS_DB)
+
+    row = conn.execute(
+        "SELECT status FROM bot_access WHERE user_id=?",
+        (int(user_id),)
+    ).fetchone()
+
+    conn.close()
+
+    return row[0] if row else None
+
+
+def save_access_request(
+    user_id,
+    username,
+    first_name,
+):
+
+    conn = sqlite3.connect(ACCESS_DB)
+
+    conn.execute(
+        """INSERT INTO bot_access
+        (user_id, username, first_name, status, requested_at)
+        VALUES (?, ?, ?, 'pending', CURRENT_TIMESTAMP)
+
+        ON CONFLICT(user_id) DO UPDATE SET
+        username=excluded.username,
+        first_name=excluded.first_name,
+        status='pending',
+        requested_at=CURRENT_TIMESTAMP
+        """,
+        (
+            int(user_id),
+            username or "",
+            first_name or "",
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def set_access_status(
+    user_id,
+    status,
+):
+
+    conn = sqlite3.connect(ACCESS_DB)
+
+    conn.execute(
+        "UPDATE bot_access SET status=? WHERE user_id=?",
+        (
+            status,
+            int(user_id),
+        )
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def access_request_keyboard(user_id):
+
+    return InlineKeyboardMarkup(
+        [[
+            InlineKeyboardButton(
+                "✅ Approve",
+                callback_data=f"access:approve:{user_id}",
+            ),
+            InlineKeyboardButton(
+                "❌ Reject",
+                callback_data=f"access:reject:{user_id}",
+            ),
+        ]]
+    )
+
+
+async def request_access(
+    update,
+    context,
+):
+
+    user = update.effective_user
+
+    if not user:
+        return False
+
+    if user.id == ADMIN_ID:
+        return True
+
+    status = get_access_status(user.id)
+
+    if status == "approved":
+        return True
+
+    if status is None:
+
+        save_access_request(
+            user.id,
+            user.username,
+            user.first_name,
+        )
+
+        username = (
+            f"@{user.username}"
+            if user.username
+            else "—"
+        )
+
+        admin_text = (
+            "🔔 <b>NEW USER ACCESS REQUEST</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👤 Name: "
+            f"<b>{html.escape(user.first_name or '—')}</b>\n"
+            f"🔗 Username: "
+            f"<b>{html.escape(username)}</b>\n"
+            f"🆔 User ID: "
+            f"<code>{user.id}</code>\n\n"
+            "⚠️ ဒီ user ကို Bot အသုံးပြုခွင့်ပေးမလား?"
+        )
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=admin_text,
+                parse_mode="HTML",
+                reply_markup=access_request_keyboard(
+                    user.id
+                ),
+            )
+
+        except Exception as e:
+
+            print(
+                "ACCESS REQUEST SEND ERROR:",
+                e,
+            )
+
+    if status == "rejected":
+
+        msg = (
+            "❌ <b>Access Denied</b>\n\n"
+            "Admin က ဒီ Bot ကိုအသုံးပြုခွင့် "
+            "မပေးသေးပါ။"
+        )
+
+    else:
+
+        msg = (
+            "🔐 <b>Access Approval Required</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "ဒီ Bot ကိုအသုံးပြုရန် "
+            "Admin Approval လိုအပ်ပါတယ်။\n\n"
+            "⏳ Request ကို Admin ဆီပို့ထားပါတယ်။\n"
+            "Approve ဖြစ်တဲ့အခါ Bot ကိုအသုံးပြုနိုင်ပါမယ်။"
+        )
+
+    if update.message:
+
+        await update.message.reply_text(
+            msg,
+            parse_mode="HTML",
+        )
+
+    return False
+
+
+async def handle_access_callback(
+    update,
+    context,
+):
+
+    query = update.callback_query
+
+    if query.from_user.id != ADMIN_ID:
+
+        await query.answer(
+            "❌ Admin only",
+            show_alert=True,
+        )
+
+        return True
+
+    parts = (
+        query.data or ""
+    ).split(":")
+
+    if len(parts) != 3:
+
+        await query.answer(
+            "Invalid request",
+            show_alert=True,
+        )
+
+        return True
+
+    action = parts[1]
+    uid_text = parts[2]
+
+    try:
+
+        user_id = int(uid_text)
+
+    except ValueError:
+
+        await query.answer(
+            "Invalid user ID",
+            show_alert=True,
+        )
+
+        return True
+
+    if action == "approve":
+
+        status = "approved"
+
+    elif action == "reject":
+
+        status = "rejected"
+
+    else:
+
+        return True
+
+    set_access_status(
+        user_id,
+        status,
+    )
+
+    label = (
+        "✅ APPROVED"
+        if status == "approved"
+        else "❌ REJECTED"
+    )
+
+    try:
+
+        await query.edit_message_text(
+            (query.message.text or "")
+            + f"\n\n<b>{label}</b>",
+            parse_mode="HTML",
+        )
+
+    except Exception:
+
+        pass
+
+    if status == "approved":
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "✅ <b>Access Approved!</b>\n\n"
+                    "✨ Eren's Diamond Bot ကို "
+                    "အခုအသုံးပြုနိုင်ပါပြီ။\n"
+                    "/start နှိပ်ပြီး စတင်ပါ။"
+                ),
+                parse_mode="HTML",
+                reply_markup=main_keyboard(),
+            )
+
+        except Exception as e:
+
+            print(
+                "APPROVAL DM ERROR:",
+                e,
+            )
+
+        await query.answer(
+            "User approved ✅"
+        )
+
+    else:
+
+        try:
+
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "❌ <b>Access Denied</b>\n\n"
+                    "Admin က ဒီ Bot ကိုအသုံးပြုခွင့် "
+                    "မပေးသေးပါ။"
+                ),
+                parse_mode="HTML",
+            )
+
+        except Exception as e:
+
+            print(
+                "REJECTION DM ERROR:",
+                e,
+            )
+
+        await query.answer(
+            "User rejected ❌"
+        )
+
+    return True
 
 
 # =========================================================
 # CUSTOMER MMK PRICE
 # =========================================================
-#
-# ဒီနေရာမှာ မင်းရောင်းမယ့် MMK price တွေ ထည့်မယ်။
-#
-# ဥပမာ:
-#
-# MMK_PRICES = {
-#     "Global": {
-#         "78+8": 5000,
-#         "86": 5600,
-#     },
-#     "Malaysia": {
-#         "78+8": 5200,
-#     },
-#     "Indonesia": {
-#         "78+8": 5500,
-#     },
-# }
-#
-# အခု မင်း price မပေးသေးလို့ empty ထားထားတယ်။
-#
-
 
 MMK_PRICES = {
     "Global": {},
@@ -87,16 +401,22 @@ LAST_PRODUCTS_LOAD = 0
 # =========================================================
 
 def api_headers():
+
     return {
         "X-API-Key": MELO_API_KEY,
         "X-Secret-Key": MELO_SECRET_KEY,
     }
 
 
-def api_get(path, params=None):
+def api_get(
+    path,
+    params=None,
+):
+
     url = MELO_BASE_URL + path
 
     try:
+
         response = requests.get(
             url,
             headers=api_headers(),
@@ -105,14 +425,18 @@ def api_get(path, params=None):
         )
 
         try:
+
             data = response.json()
+
         except Exception:
+
             data = {
                 "success": False,
                 "message": response.text,
             }
 
         if response.status_code >= 400:
+
             return None, (
                 data.get("message")
                 or f"HTTP {response.status_code}"
@@ -121,16 +445,25 @@ def api_get(path, params=None):
         return data, None
 
     except requests.RequestException as e:
+
         return None, str(e)
 
 
-def api_post(path, payload):
+def api_post(
+    path,
+    payload,
+):
+
     url = MELO_BASE_URL + path
 
     headers = api_headers()
-    headers["Content-Type"] = "application/json"
+
+    headers["Content-Type"] = (
+        "application/json"
+    )
 
     try:
+
         response = requests.post(
             url,
             headers=headers,
@@ -139,14 +472,18 @@ def api_post(path, payload):
         )
 
         try:
+
             data = response.json()
+
         except Exception:
+
             data = {
                 "success": False,
                 "message": response.text,
             }
 
         if response.status_code >= 400:
+
             return None, (
                 data.get("message")
                 or f"HTTP {response.status_code}"
@@ -155,6 +492,7 @@ def api_post(path, payload):
         return data, None
 
     except requests.RequestException as e:
+
         return None, str(e)
 
 
@@ -163,11 +501,17 @@ def api_post(path, payload):
 # =========================================================
 
 def get_profile():
-    return api_get("/api/v1/h2h/profile")
+
+    return api_get(
+        "/api/v1/h2h/profile"
+    )
 
 
 def get_balance():
-    return api_get("/api/v1/h2h/profile/balance")
+
+    return api_get(
+        "/api/v1/h2h/profile/balance"
+    )
 
 
 # =========================================================
@@ -175,6 +519,7 @@ def get_balance():
 # =========================================================
 
 def clean_text(value):
+
     if value is None:
         return ""
 
@@ -182,16 +527,6 @@ def clean_text(value):
 
 
 def normalize_product_name(name):
-    """
-    Customer ပြမယ့် Dia amount ကို normalize လုပ်တယ်။
-
-    ဥပမာ:
-    78 + 8 Diamonds
-    78+8 Diamonds
-    78+8
-
-    => 78+8
-    """
 
     name = clean_text(name)
 
@@ -201,45 +536,59 @@ def normalize_product_name(name):
         name,
     )
 
-    name = name.replace(" ", "")
+    name = name.replace(
+        " ",
+        "",
+    )
 
-    # 78+8, 78+8D etc.
     match = re.search(
         r"(\d+(?:\.\d+)?)\+(\d+(?:\.\d+)?)",
         name,
     )
 
     if match:
+
         a = match.group(1)
         b = match.group(2)
 
         def fmt(x):
+
             try:
+
                 f = float(x)
+
                 if f.is_integer():
                     return str(int(f))
+
                 return str(f)
+
             except Exception:
+
                 return x
 
         return f"{fmt(a)}+{fmt(b)}"
 
-    # 86 Diamonds
     match = re.search(
         r"(\d+(?:\.\d+)?)",
         name,
     )
 
     if match:
+
         value = match.group(1)
 
         try:
+
             f = float(value)
 
             if f.is_integer():
-                return str(int(f))
+
+                return str(
+                    int(f)
+                )
 
         except Exception:
+
             pass
 
         return value
@@ -248,7 +597,11 @@ def normalize_product_name(name):
 
 
 def diamond_sort_key(product):
-    amount = product.get("amount", "")
+
+    amount = product.get(
+        "amount",
+        "",
+    )
 
     match = re.search(
         r"(\d+(?:\.\d+)?)",
@@ -256,9 +609,15 @@ def diamond_sort_key(product):
     )
 
     if match:
+
         try:
-            return float(match.group(1))
+
+            return float(
+                match.group(1)
+            )
+
         except Exception:
+
             pass
 
     return 999999999
@@ -269,12 +628,21 @@ def diamond_sort_key(product):
 # =========================================================
 
 def is_mlbb_product(product):
+
     text = " ".join(
         [
-            clean_text(product.get("name")),
-            clean_text(product.get("type_name")),
-            clean_text(product.get("category_name")),
-            clean_text(product.get("server_name")),
+            clean_text(
+                product.get("name")
+            ),
+            clean_text(
+                product.get("type_name")
+            ),
+            clean_text(
+                product.get("category_name")
+            ),
+            clean_text(
+                product.get("server_name")
+            ),
         ]
     ).lower()
 
@@ -289,27 +657,39 @@ def is_mlbb_product(product):
 # SERVER CLASSIFICATION
 # =========================================================
 
-def classify_ml_server(product, brand_name=""):
-    """
-    S1/S2 ကို Global လို့ မခန့်မှန်းဘူး။
-
-    API ရဲ့ actual brand/server/name data ကို
-    အခြေခံပြီး ခွဲတယ်။
-    """
+def classify_ml_server(
+    product,
+    brand_name="",
+):
 
     values = [
-        clean_text(product.get("name")),
-        clean_text(product.get("type_name")),
-        clean_text(product.get("server_name")),
-        clean_text(product.get("server_code")),
-        clean_text(brand_name),
-        clean_text(product.get("brand_name")),
-        clean_text(product.get("description")),
+        clean_text(
+            product.get("name")
+        ),
+        clean_text(
+            product.get("type_name")
+        ),
+        clean_text(
+            product.get("server_name")
+        ),
+        clean_text(
+            product.get("server_code")
+        ),
+        clean_text(
+            brand_name
+        ),
+        clean_text(
+            product.get("brand_name")
+        ),
+        clean_text(
+            product.get("description")
+        ),
     ]
 
-    text = " ".join(values).lower()
+    text = " ".join(
+        values
+    ).lower()
 
-    # Indonesia
     indonesia_words = [
         "indonesia",
         "indonesian",
@@ -319,10 +699,13 @@ def classify_ml_server(product, brand_name=""):
         "_id",
     ]
 
-    if any(word in text for word in indonesia_words):
+    if any(
+        word in text
+        for word in indonesia_words
+    ):
+
         return "Indonesia"
 
-    # Malaysia
     malaysia_words = [
         "malaysia",
         "malaysian",
@@ -332,10 +715,13 @@ def classify_ml_server(product, brand_name=""):
         "_my",
     ]
 
-    if any(word in text for word in malaysia_words):
+    if any(
+        word in text
+        for word in malaysia_words
+    ):
+
         return "Malaysia"
 
-    # Global
     global_words = [
         "global",
         "worldwide",
@@ -344,7 +730,11 @@ def classify_ml_server(product, brand_name=""):
         "(gl)",
     ]
 
-    if any(word in text for word in global_words):
+    if any(
+        word in text
+        for word in global_words
+    ):
+
         return "Global"
 
     return None
@@ -355,12 +745,6 @@ def classify_ml_server(product, brand_name=""):
 # =========================================================
 
 def load_all_ml_products():
-    """
-    Melostore regular pricelist ကို pagination နဲ့ယူတယ်။
-
-    limit = 1000
-    max pages = 30
-    """
 
     all_products = []
 
@@ -373,6 +757,7 @@ def load_all_ml_products():
         }
 
         if cursor:
+
             params["cursor"] = cursor
 
         data, error = api_get(
@@ -381,33 +766,58 @@ def load_all_ml_products():
         )
 
         if error:
-            print("Pricelist error:", error)
+
+            print(
+                "Pricelist error:",
+                error,
+            )
+
             break
 
         if not data:
             break
 
-        rows = data.get("data", [])
+        rows = data.get(
+            "data",
+            []
+        )
 
-        meta = data.get("meta", {})
+        meta = data.get(
+            "meta",
+            {}
+        )
 
-        brands = meta.get("brands", [])
+        brands = meta.get(
+            "brands",
+            []
+        )
 
         brand_map = {
-            str(x.get("id")): x.get("name", "")
+            str(x.get("id")):
+            x.get("name", "")
             for x in brands
         }
 
         for product in rows:
 
-            if clean_text(product.get("status")).lower() != "active":
+            if clean_text(
+                product.get("status")
+            ).lower() != "active":
+
                 continue
 
-            if not is_mlbb_product(product):
+            if not is_mlbb_product(
+                product
+            ):
+
                 continue
 
             brand_name = brand_map.get(
-                str(product.get("brand_id")),
+                str(
+                    product.get(
+                        "brand_id"
+                    )
+                ),
                 "",
             )
 
@@ -419,22 +829,45 @@ def load_all_ml_products():
             if not server:
                 continue
 
-            item = dict(product)
-
-            item["brand_name"] = brand_name
-            item["server"] = server
-            item["amount"] = normalize_product_name(
-                product.get("name", "")
+            item = dict(
+                product
             )
 
-            all_products.append(item)
+            item["brand_name"] = (
+                brand_name
+            )
 
-        pagination = meta.get("pagination", {})
+            item["server"] = (
+                server
+            )
 
-        if not pagination.get("has_more"):
+            item["amount"] = (
+                normalize_product_name(
+                    product.get(
+                        "name",
+                        ""
+                    )
+                )
+            )
+
+            all_products.append(
+                item
+            )
+
+        pagination = meta.get(
+            "pagination",
+            {}
+        )
+
+        if not pagination.get(
+            "has_more"
+        ):
+
             break
 
-        cursor = pagination.get("next_cursor")
+        cursor = pagination.get(
+            "next_cursor"
+        )
 
         if not cursor:
             break
@@ -447,9 +880,12 @@ def load_all_ml_products():
 # =========================================================
 
 def refresh_products():
+
     global PRODUCT_CACHE
 
-    products = load_all_ml_products()
+    products = (
+        load_all_ml_products()
+    )
 
     grouped = {
         "Global": [],
@@ -458,51 +894,79 @@ def refresh_products():
     }
 
     for product in products:
-        server = product.get("server")
+
+        server = product.get(
+            "server"
+        )
 
         if server in grouped:
-            grouped[server].append(product)
 
-    # Same amount duplicate တွေကို customer UI မှာ မပြ။
-    #
-    # အတူတူ amount ရှိရင် API cost နည်းတဲ့ active SKU
-    # တစ်ခုကိုရွေးထားမယ်။
+            grouped[
+                server
+            ].append(product)
 
     for server in grouped:
 
         unique = {}
 
-        for product in grouped[server]:
+        for product in grouped[
+            server
+        ]:
 
-            amount = product.get("amount")
+            amount = product.get(
+                "amount"
+            )
 
             if not amount:
                 continue
 
-            old = unique.get(amount)
+            old = unique.get(
+                amount
+            )
 
             if old is None:
-                unique[amount] = product
+
+                unique[
+                    amount
+                ] = product
+
                 continue
 
             try:
+
                 new_price = float(
-                    product.get("price", 999999999)
+                    product.get(
+                        "price",
+                        999999999
+                    )
                 )
+
             except Exception:
+
                 new_price = 999999999
 
             try:
+
                 old_price = float(
-                    old.get("price", 999999999)
+                    old.get(
+                        "price",
+                        999999999
+                    )
                 )
+
             except Exception:
+
                 old_price = 999999999
 
             if new_price < old_price:
-                unique[amount] = product
 
-        grouped[server] = sorted(
+                unique[
+                    amount
+                ] = product
+
+        grouped[
+            server
+        ] = sorted(
             unique.values(),
             key=diamond_sort_key,
         )
@@ -511,281 +975,221 @@ def refresh_products():
 
     print(
         "Products:",
-        {k: len(v) for k, v in PRODUCT_CACHE.items()}
+        {
+            k: len(v)
+            for k, v in PRODUCT_CACHE.items()
+        }
     )
+
+    return PRODUCT_CACHE
+
+# =========================================================
+# PRODUCT CACHE SETTINGS
+# =========================================================
+
+PRODUCT_CACHE_TTL = 300  # 5 minutes
+PRODUCT_LOADING = False
+
+
+def get_cached_products():
+    """
+    Pricelist ကို request တိုင်း မခေါ်ဘဲ cache သုံးမယ်။
+    5 minutes မပြည့်သေးရင် API မခေါ်ဘူး။
+    """
+
+    global LAST_PRODUCTS_LOAD
+
+    now = __import__("time").time()
+
+    if PRODUCT_CACHE_READY():
+        return PRODUCT_CACHE
+
+    if LAST_PRODUCTS_LOAD:
+        age = now - LAST_PRODUCTS_LOAD
+
+        if age < PRODUCT_CACHE_TTL:
+            return PRODUCT_CACHE
+
+    return refresh_products_safe()
+
+
+def PRODUCT_CACHE_READY():
+    return any(
+        len(PRODUCT_CACHE.get(server, [])) > 0
+        for server in (
+            "Global",
+            "Malaysia",
+            "Indonesia",
+        )
+    )
+
+
+def refresh_products_safe():
+    global LAST_PRODUCTS_LOAD
+    global PRODUCT_LOADING
+
+    if PRODUCT_LOADING:
+        return PRODUCT_CACHE
+
+    PRODUCT_LOADING = True
+
+    try:
+        print("🔄 Loading Melostore products...")
+
+        old_cache = PRODUCT_CACHE.copy()
+
+        products = load_all_ml_products()
+
+        # API fail / empty ဖြစ်ရင်
+        # ရှိပြီးသား cache ကို မဖျက်ဘူး။
+        if not products:
+
+            print(
+                "⚠️ Product API returned empty."
+            )
+
+            if PRODUCT_CACHE_READY():
+                return old_cache
+
+            return PRODUCT_CACHE
+
+        grouped = {
+            "Global": [],
+            "Malaysia": [],
+            "Indonesia": [],
+        }
+
+        for product in products:
+
+            server = product.get("server")
+
+            if server not in grouped:
+                continue
+
+            amount = product.get("amount")
+
+            if not amount:
+                continue
+
+            grouped[server].append(product)
+
+        # Duplicate amount ဖယ်မယ်
+        for server in grouped:
+
+            unique = {}
+
+            for product in grouped[server]:
+
+                amount = product.get("amount")
+
+                if amount not in unique:
+                    unique[amount] = product
+                    continue
+
+                try:
+                    new_price = float(
+                        product.get(
+                            "price",
+                            999999999,
+                        )
+                    )
+                except Exception:
+                    new_price = 999999999
+
+                try:
+                    old_price = float(
+                        unique[amount].get(
+                            "price",
+                            999999999,
+                        )
+                    )
+                except Exception:
+                    old_price = 999999999
+
+                if new_price < old_price:
+                    unique[amount] = product
+
+            grouped[server] = sorted(
+                unique.values(),
+                key=diamond_sort_key,
+            )
+
+        # အနည်းဆုံး product တစ်ခုရှိမှ cache update
+        if any(grouped.values()):
+
+            PRODUCT_CACHE = grouped
+            LAST_PRODUCTS_LOAD = (
+                __import__("time").time()
+            )
+
+            print(
+                "✅ Products loaded:",
+                {
+                    k: len(v)
+                    for k, v in PRODUCT_CACHE.items()
+                },
+            )
+
+        return PRODUCT_CACHE
+
+    except Exception as e:
+
+        print(
+            "❌ Product refresh error:",
+            repr(e),
+        )
+
+        return PRODUCT_CACHE
+
+    finally:
+        PRODUCT_LOADING = False
+
+
+# =========================================================
+# LOAD PRODUCTS ONLY WHEN NEEDED
+# =========================================================
+
+def ensure_products_loaded():
+
+    if not PRODUCT_CACHE_READY():
+
+        print(
+            "📦 Product cache empty → loading..."
+        )
+
+        return refresh_products_safe()
 
     return PRODUCT_CACHE
 
 
 # =========================================================
-# PRICE DISPLAY
+# IMPROVED SERVER PRODUCT GETTER
 # =========================================================
 
-def get_mmk_price(server, amount):
-    price = MMK_PRICES.get(server, {}).get(amount)
+def get_server_products(server):
 
-    if price is None:
-        return None
-
-    try:
-        return int(price)
-    except Exception:
-        return price
-
-
-def format_mmk(price):
-    if price is None:
-        return "Price မသတ်မှတ်ရသေး"
-
-    try:
-        return f"{int(price):,} MMK"
-    except Exception:
-        return f"{price} MMK"
-
-
-# =========================================================
-# MAIN REPLY KEYBOARD
-# =========================================================
-
-def main_keyboard():
-    return ReplyKeyboardMarkup(
-        [
-            [
-                "💎 MLBB Diamonds",
-                "🔍 Check ML ID",
-            ],
-            [
-                "💰 Balance",
-                "🔌 API Status",
-            ],
-        ],
-        resize_keyboard=True,
-    )
-
-
-# =========================================================
-# SERVER INLINE KEYBOARD
-# =========================================================
-
-def server_keyboard():
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "🌍 Global Server",
-                    callback_data="server:Global",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🇲🇾 Malaysia Server",
-                    callback_data="server:Malaysia",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🇮🇩 Indonesia Server",
-                    callback_data="server:Indonesia",
-                )
-            ],
-        ]
-    )
-
-
-# =========================================================
-# START
-# =========================================================
-
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    context.user_data.clear()
-
-    text = (
-        "✨ <b>Eren's Diamond Bot</b> ✨\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "💎 MLBB Diamond Top-Up\n\n"
-        "🛒 Choose your service:\n\n"
-        "💎 Diamonds\n"
-        "🔍 Check ML ID\n"
-        "💰 Balance\n"
-        "🔌 API Status\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "⚡ Powered by Eren"
-    )
-
-    await update.message.reply_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=main_keyboard(),
-    )
-
-
-# =========================================================
-# BALANCE
-# =========================================================
-
-async def show_balance(
-    update: Update,
-):
-
-    data, error = get_balance()
-
-    if error:
-        await update.message.reply_text(
-            "❌ Balance ရယူလို့မရပါဘူး။\n\n"
-            f"Error: {html.escape(str(error))}"
-        )
-        return
-
-    info = data.get("data", {})
-
-    balance = info.get(
-        "h2h_balance",
-        0,
-    )
-
-    usd = info.get(
-        "h2h_balance_usd",
-        0,
-    )
-
-    rate = info.get(
-        "usd_idr_rate",
-        0,
-    )
-
-    sandbox = info.get(
-        "is_sandbox_mode",
-        False,
-    )
-
-    mode = (
-        "🧪 Sandbox Mode"
-        if sandbox
-        else "🟢 Production Mode"
-    )
-
-    text = (
-        "💰 <b>Bot Balance</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🪙 MC Balance\n"
-        f"<b>{balance:,.2f} MC</b>\n\n"
-        f"💵 USD Value\n"
-        f"<b>${usd:,.2f}</b>\n\n"
-        f"💱 USD / IDR Rate\n"
-        f"<b>{rate:,.0f}</b>\n\n"
-        f"⚙️ Mode\n"
-        f"<b>{mode}</b>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "🎴 Eren Shop"
-    )
-
-    await update.message.reply_text(
-        text,
-        parse_mode="HTML",
-    )
-
-# =========================================================
-# API STATUS
-# =========================================================
-
-async def show_api_status(
-    update: Update,
-):
-
-    data, error = get_profile()
-
-    if error:
-        await update.message.reply_text(
-            "🔴 <b>API Offline / Error</b>\n\n"
-            f"{html.escape(str(error))}",
-            parse_mode="HTML",
-        )
-        return
-
-    info = data.get("data", {})
-
-    tier = info.get("tier", {})
-
-    tier_name = tier.get(
-        "name",
-        "Unknown",
-    )
-
-    sandbox = info.get(
-        "is_sandbox_mode",
-        False,
-    )
-
-    status = (
-        "🧪 Sandbox Mode"
-        if sandbox
-        else "🟢 Production Mode"
-    )
-
-    text = (
-        "🔌 <b>Melostore API Status</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🟢 Connection: <b>Connected</b>\n"
-        f"🏷️ Tier: <b>{html.escape(str(tier_name))}</b>\n"
-        f"⚙️ Mode: <b>{status}</b>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "⚡ Powered by Eren"
-    )
-
-    await update.message.reply_text(
-        text,
-        parse_mode="HTML",
-    )
-
-
-# =========================================================
-# MLBB SERVER PAGE
-# =========================================================
-
-async def open_mlbb(
-    update: Update,
-):
-
-    await update.message.reply_text(
-        "💎 <b>MLBB Diamond Top-Up</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🌍 Server ရွေးပါ။",
-        parse_mode="HTML",
-        reply_markup=server_keyboard(),
-    )
-
-
-# =========================================================
-# DIAMOND LIST MESSAGE
-# =========================================================
-
-def build_amount_text(server):
+    ensure_products_loaded()
 
     products = PRODUCT_CACHE.get(
         server,
         [],
     )
 
-    if not products:
-        return (
-            f"💎 <b>{html.escape(server)} Server</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "❌ Diamond products မတွေ့ပါ။"
-        )
+    return products
 
-    lines = [
-        f"💎 <b>{html.escape(server)} Server</b>",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "",
-        "💎 <b>Diamond Amounts</b>",
-        "",
-    ]
 
-    for product in products:
+# =========================================================
+# IMPROVED AMOUNT KEYBOARD
+# =========================================================
+
+def amount_keyboard(server):
+
+    products = get_server_products(server)
+
+    buttons = []
+    row = []
+
+    for index, product in enumerate(products):
 
         amount = product.get(
             "amount",
@@ -797,49 +1201,22 @@ def build_amount_text(server):
             amount,
         )
 
-        lines.append(
-            f"💎 {html.escape(str(amount))} "
-            f"— <b>{format_mmk(price)}</b>"
+        # Price မရှိရင်လည်း button ပြမယ်
+        # order မှာတော့ block လုပ်ထားပြီးသား
+        label = (
+            f"💎 {amount}"
+            if price is None
+            else f"💎 {amount} • {format_mmk(price)}"
         )
 
-    lines.extend(
-        [
-            "",
-            "👇 အောက်က Button ကနေ Amount ရွေးပါ။",
-        ]
-    )
-
-    return "\n".join(lines)
-
-
-# =========================================================
-# AMOUNT BUTTONS
-# =========================================================
-
-def amount_keyboard(server):
-
-    products = PRODUCT_CACHE.get(
-        server,
-        [],
-    )
-
-    buttons = []
-
-    row = []
-
-    for index, product in enumerate(products):
-
-        amount = product.get(
-            "amount",
-            "?",
+        row.append(
+            InlineKeyboardButton(
+                label,
+                callback_data=(
+                    f"amount:{server}:{index}"
+                ),
+            )
         )
-
-        button = InlineKeyboardButton(
-            f"💎 {amount}",
-            callback_data=f"amount:{server}:{index}",
-        )
-
-        row.append(button)
 
         if len(row) == 2:
             buttons.append(row)
@@ -861,170 +1238,38 @@ def amount_keyboard(server):
 
 
 # =========================================================
-# CHECK ID MAIN PAGE
+# IMPROVED DIAMOND PAGE
 # =========================================================
 
-async def start_check_id(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
+async def show_server_products(
+    query,
+    server,
 ):
 
-    context.user_data.clear()
+    products = get_server_products(server)
 
-    context.user_data["state"] = "check_id_player"
+    if not products:
 
-    text = (
-        "🔍 <b>MLBB ID Checker</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🆔 <b>Player ID</b> ထည့်ပါ။\n\n"
-        "ဥပမာ:\n"
-        "<code>12345678</code>\n\n"
-        "❌ Cancel လုပ်ချင်ရင် /start"
-    )
-
-    await update.message.reply_text(
-        text,
-        parse_mode="HTML",
-    )
-
-
-# =========================================================
-# CHECK ID → API
-# =========================================================
-
-def check_ml_nickname(
-    player_id,
-    zone_id,
-):
-
-    payload = {
-        "game_code": "mobile-legends",
-        "customer_target": str(player_id),
-        "customer_target_zone": str(zone_id),
-    }
-
-    return api_post(
-        "/api/v1/h2h/check-nickname",
-        payload,
-    )
-
-
-# =========================================================
-# CHECK ID RESULT
-# =========================================================
-
-async def process_check_id(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    player_id = context.user_data.get(
-        "check_player_id"
-    )
-
-    zone_id = update.message.text.strip()
-
-    if not zone_id.isdigit():
-        await update.message.reply_text(
-            "❌ Zone ID မှာ နံပါတ်ပဲ ထည့်ပါ။\n\n"
-            "ဥပမာ: <code>2039</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    await update.message.reply_text(
-        "🔍 <b>Checking MLBB ID...</b>\n"
-        "ခဏစောင့်ပါ...",
-        parse_mode="HTML",
-    )
-
-    data, error = check_ml_nickname(
-        player_id,
-        zone_id,
-    )
-
-    if error:
-        await update.message.reply_text(
-            "❌ <b>Check ID Failed</b>\n\n"
-            f"{html.escape(str(error))}",
+        await query.edit_message_text(
+            "⚠️ <b>Products မတွေ့သေးပါ။</b>\n\n"
+            "🔄 API Product List ကို "
+            "ခဏအကြာမှာ ပြန်စစ်ပေးပါမယ်။",
             parse_mode="HTML",
         )
 
-        context.user_data.clear()
-
         return
 
-    info = data.get(
-        "data",
-        {},
-    )
-
-    # API response format က version အလိုက်
-    # field location နည်းနည်းကွာနိုင်လို့ fallback ထားထားတယ်။
-
-    nickname = (
-        info.get("username")
-        or info.get("nickname")
-        or info.get("name")
-        or "-"
-    )
-
-    region = (
-        info.get("region")
-        or info.get("region_name")
-        or "-"
-    )
-
-    region_type = info.get(
-        "region_type",
-        "",
-    )
-
-    billing = info.get(
-        "billing",
-        {},
-    )
-
-    charged_mc = billing.get(
-        "charged_mc",
-        0,
-    )
-
-    free_remaining = billing.get(
-        "free_remaining_today",
-        0,
-    )
-
     text = (
-        "🔍 <b>MLBB ID Result</b>\n"
+        f"💎 <b>{html.escape(server)} Server</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
-        f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
-        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n"
-        f"🌍 Region: <b>{html.escape(str(region))}</b>\n"
+        "💎 <b>Diamond Amount</b>\n"
+        "👇 ဝယ်ချင်တဲ့ Amount ကိုရွေးပါ။"
     )
 
-    if region_type:
-        text += (
-            f"🏷️ Region Type: "
-            f"<b>{html.escape(str(region_type))}</b>\n"
-        )
-
-    text += (
-        "\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "✅ <b>ID Verified</b>"
-    )
-
-    # Billing ကို customer UI မှာ မပြဘူး။
-    # charged_mc / free_remaining_today က backend
-    # information အဖြစ်ပဲထားတယ်။
-
-    context.user_data.clear()
-
-    await update.message.reply_text(
+    await query.edit_message_text(
         text,
         parse_mode="HTML",
+        reply_markup=amount_keyboard(server),
     )
 
 
@@ -1032,266 +1277,73 @@ async def process_check_id(
 # SERVER CALLBACK
 # =========================================================
 
-async def callback_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
+async def handle_server_callback(
+    query,
+    context,
 ):
 
-    query = update.callback_query
+    server = query.data.split(
+        ":",
+        1,
+    )[1]
 
-    if not query:
-        return
+    context.user_data["server"] = server
 
     await query.answer()
 
-    data = query.data or ""
-
-    # -----------------------------------------------------
-    # BACK TO SERVERS
-    # -----------------------------------------------------
-
-    if data == "back:servers":
-
-        await query.edit_message_text(
-            "💎 <b>MLBB Diamond Top-Up</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "🌍 Server ရွေးပါ။",
-            parse_mode="HTML",
-            reply_markup=server_keyboard(),
-        )
-
-        return
-
-    # -----------------------------------------------------
-    # SERVER SELECT
-    # -----------------------------------------------------
-
-    if data.startswith("server:"):
-
-        server = data.split(
-            ":",
-            1,
-        )[1]
-
-        if server not in (
-            "Global",
-            "Malaysia",
-            "Indonesia",
-        ):
-            await query.answer(
-                "❌ Invalid server",
-                show_alert=True,
-            )
-            return
-
-        # Product cache မရှိရင် refresh
-        if not PRODUCT_CACHE.get(server):
-
-            await query.edit_message_text(
-                "⏳ <b>Loading Diamond Products...</b>",
-                parse_mode="HTML",
-            )
-
-            refresh_products()
-
-        products = PRODUCT_CACHE.get(
-            server,
-            [],
-        )
-
-        if not products:
-
-            await query.edit_message_text(
-                f"❌ <b>{html.escape(server)} Server</b>\n\n"
-                "ဒီ server အတွက် MLBB product မတွေ့ပါ။",
-                parse_mode="HTML",
-                reply_markup=server_keyboard(),
-            )
-
-            return
-
-        text = build_amount_text(
-            server
-        )
-
-        await query.edit_message_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=amount_keyboard(server),
-        )
-
-        return
-
-    # -----------------------------------------------------
-    # AMOUNT SELECT
-    # -----------------------------------------------------
-
-    if data.startswith("amount:"):
-
-        parts = data.split(":")
-
-        if len(parts) != 3:
-            return
-
-        server = parts[1]
-
-        try:
-            index = int(parts[2])
-        except Exception:
-            return
-
-        products = PRODUCT_CACHE.get(
-            server,
-            [],
-        )
-
-        if index < 0 or index >= len(products):
-            await query.answer(
-                "❌ Product မတွေ့ပါ။",
-                show_alert=True,
-            )
-            return
-
-        product = products[index]
-
-        context.user_data["server"] = server
-        context.user_data["product"] = product
-
-        amount = product.get(
-            "amount",
-            "?",
-        )
-
-        price = get_mmk_price(
-            server,
-            amount,
-        )
-
-        sku = product.get(
-            "sku_code",
-            "",
-        )
-
-        context.user_data["sku"] = sku
-
-        price_text = format_mmk(price)
-
-        text = (
-            "💎 <b>Selected Product</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🌍 Server: <b>{html.escape(server)}</b>\n"
-            f"💎 Amount: <b>{html.escape(str(amount))}</b>\n"
-            f"💰 Price: <b>{html.escape(price_text)}</b>\n\n"
-            "🆔 <b>Player ID</b> ထည့်ပါ။\n"
-            "ဥပမာ: <code>12345678</code>"
-        )
-
-        context.user_data["state"] = (
-            "order_player_id"
-        )
-
-        await query.edit_message_text(
-            text,
-            parse_mode="HTML",
-        )
-
-        return
-
-# =========================================================
-# ORDER → CHECK NICKNAME
-# =========================================================
-
-async def process_order_player_id(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    player_id = update.message.text.strip()
-
-    if not player_id.isdigit():
-        await update.message.reply_text(
-            "❌ Player ID မှာ နံပါတ်ပဲ ထည့်ပါ။"
-        )
-        return
-
-    context.user_data["player_id"] = player_id
-    context.user_data["state"] = "order_zone_id"
-
-    await update.message.reply_text(
-        "🌐 <b>Zone ID</b> ထည့်ပါ။\n\n"
-        "ဥပမာ: <code>2039</code>",
-        parse_mode="HTML",
-    )
-
-
-# =========================================================
-# ORDER → ZONE ID
-# =========================================================
-
-async def process_order_zone_id(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    zone_id = update.message.text.strip()
-
-    if not zone_id.isdigit():
-        await update.message.reply_text(
-            "❌ Zone ID မှာ နံပါတ်ပဲ ထည့်ပါ။"
-        )
-        return
-
-    player_id = context.user_data.get(
-        "player_id"
-    )
-
-    context.user_data["zone_id"] = zone_id
-
-    await update.message.reply_text(
-        "🔍 <b>Checking Nickname...</b>\n"
+    await query.edit_message_text(
+        "🔄 <b>Loading Products...</b>\n\n"
         "ခဏစောင့်ပါ...",
         parse_mode="HTML",
     )
 
-    data, error = check_ml_nickname(
-        player_id,
-        zone_id,
+    await show_server_products(
+        query,
+        server,
     )
 
-    if error:
-        await update.message.reply_text(
-            "❌ <b>ID Check Failed</b>\n\n"
-            f"{html.escape(str(error))}",
-            parse_mode="HTML",
-        )
 
-        context.user_data.clear()
+# =========================================================
+# AMOUNT CALLBACK
+# =========================================================
+
+async def handle_amount_callback(
+    query,
+    context,
+):
+
+    parts = query.data.split(":")
+
+    if len(parts) != 3:
+        await query.answer(
+            "❌ Invalid product",
+            show_alert=True,
+        )
+        return
+
+    server = parts[1]
+
+    try:
+        index = int(parts[2])
+    except ValueError:
+        await query.answer(
+            "❌ Invalid product",
+            show_alert=True,
+        )
+        return
+
+    products = get_server_products(server)
+
+    if index < 0 or index >= len(products):
+
+        await query.answer(
+            "❌ Product မတွေ့ပါ",
+            show_alert=True,
+        )
 
         return
 
-    info = data.get(
-        "data",
-        {},
-    )
-
-    nickname = (
-        info.get("username")
-        or info.get("nickname")
-        or info.get("name")
-        or "-"
-    )
-
-    context.user_data["nickname"] = nickname
-
-    server = context.user_data.get(
-        "server",
-        "Global",
-    )
-
-    product = context.user_data.get(
-        "product",
-        {},
-    )
+    product = products[index]
 
     amount = product.get(
         "amount",
@@ -1303,527 +1355,349 @@ async def process_order_zone_id(
         amount,
     )
 
-    price_text = format_mmk(price)
+    if price is None:
 
-    text = (
-        "🔍 <b>Account Verified</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
-        f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
-        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
+        await query.answer(
+            "⚠️ ဒီ Amount အတွက် MMK price မရှိသေးပါ",
+            show_alert=True,
+        )
+
+        return
+
+    context.user_data["server"] = server
+    context.user_data["product"] = product
+
+    context.user_data["state"] = (
+        "order_player_id"
+    )
+
+    await query.answer()
+
+    await query.edit_message_text(
+        "🛒 <b>Order Information</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🌍 Server: <b>{html.escape(server)}</b>\n"
         f"💎 Diamond: <b>{html.escape(str(amount))}</b>\n"
-        f"💰 Price: <b>{html.escape(price_text)}</b>\n\n"
-        "အချက်အလက်မှန်ကန်ရင် Order တင်နိုင်ပါတယ်။"
+        f"💰 Price: <b>{format_mmk(price)}</b>\n\n"
+        "🆔 <b>Player ID</b> ထည့်ပါ။\n\n"
+        "ဥပမာ: <code>12345678</code>",
+        parse_mode="HTML",
+        )
+    # =========================================================
+# ADMIN / USER ACCESS
+# =========================================================
+
+ADMIN_ID = 5698123475
+
+
+def is_admin(user_id):
+    return int(user_id) == ADMIN_ID
+
+
+def access_allowed(user_id):
+    if is_admin(user_id):
+        return True
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS bot_access (
+                user_id INTEGER PRIMARY KEY,
+                status TEXT DEFAULT 'pending'
+            )
+        """)
+
+        cur.execute(
+            "SELECT status FROM bot_access WHERE user_id=?",
+            (int(user_id),)
+        )
+
+        row = cur.fetchone()
+        conn.commit()
+        conn.close()
+
+        return row and row[0] == "approved"
+
+    except Exception as e:
+        print("Access check error:", e)
+        return False
+
+
+def create_access_request(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS bot_access (
+            user_id INTEGER PRIMARY KEY,
+            status TEXT DEFAULT 'pending'
+        )
+    """)
+
+    cur.execute("""
+        INSERT OR IGNORE INTO bot_access
+        (user_id, status)
+        VALUES (?, 'pending')
+    """, (int(user_id),))
+
+    conn.commit()
+    conn.close()
+
+
+async def send_access_request(
+    update,
+    context,
+):
+
+    user = update.effective_user
+
+    create_access_request(
+        user.id
     )
 
-    keyboard = InlineKeyboardMarkup(
+    name = html.escape(
+        user.full_name or "Unknown"
+    )
+
+    username = (
+        f"@{html.escape(user.username)}"
+        if user.username
+        else "No Username"
+    )
+
+    keyboard = InlineKeyboardMarkup([
         [
-            [
-                InlineKeyboardButton(
-                    "✅ Confirm Order",
-                    callback_data="order:confirm",
-                ),
-                InlineKeyboardButton(
-                    "❌ Cancel",
-                    callback_data="order:cancel",
-                ),
-            ]
+            InlineKeyboardButton(
+                "✅ Approve",
+                callback_data=f"approve:{user.id}",
+            ),
+            InlineKeyboardButton(
+                "❌ Reject",
+                callback_data=f"reject:{user.id}",
+            ),
         ]
-    )
+    ])
 
-    context.user_data["state"] = (
-        "order_confirm"
-    )
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                "🔔 <b>NEW USER ACCESS REQUEST</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"👤 Name: <b>{name}</b>\n"
+                f"🔹 Username: {username}\n"
+                f"🆔 ID: <code>{user.id}</code>\n\n"
+                "အောက်က button နဲ့ Access ခွင့်ပြုပါ။"
+            ),
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+    except Exception as e:
+        print("Admin request error:", e)
+
+
+# =========================================================
+# START
+# =========================================================
+
+async def start_command(
+    update,
+    context,
+):
+
+    user = update.effective_user
+
+    if not is_admin(user.id):
+
+        if not access_allowed(user.id):
+
+            create_access_request(
+                user.id
+            )
+
+            await update.message.reply_text(
+                "🔐 <b>Access Request</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "ဒီ Bot ကိုအသုံးပြုရန် "
+                "Admin Approval လိုအပ်ပါတယ်။\n\n"
+                "⏳ Request ကို Admin ဆီ "
+                "ပို့ထားပါတယ်။\n"
+                "✅ Approve ဖြစ်ရင် Bot ကို "
+                "အသုံးပြုနိုင်ပါမယ်။",
+                parse_mode="HTML",
+            )
+
+            await send_access_request(
+                update,
+                context,
+            )
+
+            return
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "💎 Diamonds",
+                callback_data="menu:diamonds",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "💰 Balance",
+                callback_data="menu:balance",
+            ),
+            InlineKeyboardButton(
+                "🔌 API Status",
+                callback_data="menu:api",
+            )
+        ]
+    ])
 
     await update.message.reply_text(
-        text,
+        "✨ <b>Eren's Diamond Bot</b> ✨\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "💎 <b>MLBB Diamond Top-Up</b>\n\n"
+        "🛒 <b>Choose your service:</b>",
         parse_mode="HTML",
         reply_markup=keyboard,
     )
 
 
 # =========================================================
-# CREATE TRANSACTION
+# ADMIN APPROVE / REJECT
 # =========================================================
 
-def create_transaction(
-    product,
-    player_id,
-    zone_id,
-):
-
-    sku = product.get(
-        "sku_code"
-    )
-
-    buyer_trx_id = (
-        "EREN-"
-        + uuid.uuid4().hex[:20].upper()
-    )
-
-    payload = {
-        "sku_code": sku,
-        "customer_target": str(player_id),
-        "customer_target_zone": str(zone_id),
-        "buyer_trx_id": buyer_trx_id,
-        "sandbox_mode": MELO_SANDBOX,
-    }
-
-    return api_post(
-        "/api/v1/h2h/transaction",
-        payload,
-    )
-
-
-# =========================================================
-# CONFIRM ORDER
-# =========================================================
-
-async def confirm_order(
-    query,
-    context,
-):
-
-    server = context.user_data.get(
-        "server"
-    )
-
-    product = context.user_data.get(
-        "product"
-    )
-
-    player_id = context.user_data.get(
-        "player_id"
-    )
-
-    zone_id = context.user_data.get(
-        "zone_id"
-    )
-
-    nickname = context.user_data.get(
-        "nickname",
-        "-",
-    )
-
-    if not product or not player_id or not zone_id:
-        await query.edit_message_text(
-            "❌ Order information မပြည့်စုံပါ။\n"
-            "/start နဲ့ ပြန်စပါ။"
-        )
-
-        context.user_data.clear()
-
-        return
-
-    amount = product.get(
-        "amount",
-        "?",
-    )
-
-    price = get_mmk_price(
-        server,
-        amount,
-    )
-
-    # MMK price မသတ်မှတ်ရသေးရင်
-    # မတော်တဆ order မတင်အောင် block လုပ်ထားတယ်။
-
-    if price is None:
-
-        await query.edit_message_text(
-            "⚠️ <b>Price မသတ်မှတ်ရသေးပါ။</b>\n\n"
-            f"💎 {html.escape(str(amount))}\n"
-            f"🌍 {html.escape(str(server))}\n\n"
-            "Admin က MMK price ထည့်ပြီးမှ "
-            "order တင်နိုင်ပါမယ်။",
-            parse_mode="HTML",
-        )
-
-        context.user_data.clear()
-
-        return
-
-    await query.edit_message_text(
-        "🛒 <b>Creating Order...</b>\n"
-        "ခဏစောင့်ပါ...",
-        parse_mode="HTML",
-    )
-
-    data, error = create_transaction(
-        product,
-        player_id,
-        zone_id,
-    )
-
-    if error:
-
-        await query.edit_message_text(
-            "❌ <b>Order Failed</b>\n\n"
-            f"{html.escape(str(error))}",
-            parse_mode="HTML",
-        )
-
-        context.user_data.clear()
-
-        return
-
-    result = data.get(
-        "data",
-        {},
-    )
-
-    transaction_id = result.get(
-        "id",
-        "-"
-    )
-
-    status = result.get(
-        "status",
-        "pending",
-    )
-
-    text = (
-        "🛒 <b>Order Created</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
-        f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
-        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
-        f"🌍 Server: <b>{html.escape(str(server))}</b>\n"
-        f"💎 Diamond: <b>{html.escape(str(amount))}</b>\n"
-        f"💰 Price: <b>{format_mmk(price)}</b>\n\n"
-        f"🆔 Transaction: <code>{html.escape(str(transaction_id))}</code>\n"
-        f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "⚡ Powered by Eren"
-    )
-
-    await query.edit_message_text(
-        text,
-        parse_mode="HTML",
-    )
-
-    context.user_data.clear()
-
-
-# =========================================================
-# CALLBACK CONTINUE
-# =========================================================
-
-async def handle_callback_actions(
+async def access_callback(
     update,
     context,
 ):
 
     query = update.callback_query
-    data = query.data or ""
 
-    # Confirm
-    if data == "order:confirm":
-
+    if not is_admin(query.from_user.id):
         await query.answer(
-            "Order တင်နေပါတယ်..."
+            "❌ Admin only",
+            show_alert=True,
         )
-
-        await confirm_order(
-            query,
-            context,
-        )
-
-        return True
-
-    # Cancel
-    if data == "order:cancel":
-
-        context.user_data.clear()
-
-        await query.edit_message_text(
-            "❌ <b>Order Cancelled</b>\n\n"
-            "/start နဲ့ Main Menu ပြန်သွားနိုင်ပါတယ်။",
-            parse_mode="HTML",
-        )
-
-        return True
-
-    return False
-
-
-# =========================================================
-# COMBINED CALLBACK HANDLER
-# =========================================================
-
-async def callback_router(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    query = update.callback_query
-
-    if not query:
         return
 
-    data = query.data or ""
-
-    if data.startswith("order:"):
-
-        handled = await handle_callback_actions(
-            update,
-            context,
-        )
-
-        if handled:
-            return
-
-    await callback_handler(
-        update,
-        context,
+    action, user_id = query.data.split(
+        ":",
+        1,
     )
 
+    user_id = int(user_id)
 
-# =========================================================
-# TEXT HANDLER
-# =========================================================
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
 
-async def text_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS bot_access (
+            user_id INTEGER PRIMARY KEY,
+            status TEXT DEFAULT 'pending'
+        )
+    """)
 
-    if not update.message:
-        return
+    if action == "approve":
 
-    text = update.message.text.strip()
+        cur.execute("""
+            INSERT INTO bot_access
+            (user_id, status)
+            VALUES (?, 'approved')
+            ON CONFLICT(user_id)
+            DO UPDATE SET status='approved'
+        """, (user_id,))
 
-    # -----------------------------------------------------
-    # MAIN MENU
-    # -----------------------------------------------------
-
-    if text == "💎 MLBB Diamonds":
-
-        await open_mlbb(update)
-
-        return
-
-    if text == "🔍 Check ML ID":
-
-        await start_check_id(
-            update,
-            context,
+        message = (
+            "✅ <b>ACCESS APPROVED</b>\n"
+            f"🆔 <code>{user_id}</code>"
         )
 
-        return
-
-    if text == "💰 Balance":
-
-        await show_balance(update)
-
-        return
-
-    if text == "🔌 API Status":
-
-        await show_api_status(update)
-
-        return
-
-    # -----------------------------------------------------
-    # CHECK ID FLOW
-    # -----------------------------------------------------
-
-    state = context.user_data.get(
-        "state"
-    )
-
-    if state == "check_id_player":
-
-        if not text.isdigit():
-
-            await update.message.reply_text(
-                "❌ Player ID မှာ နံပါတ်ပဲ ထည့်ပါ။"
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "🎉 <b>Access Approved!</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "✅ Admin က သင့်ကို "
+                    "Bot အသုံးပြုခွင့်ပေးလိုက်ပါပြီ။\n\n"
+                    "👉 /start ကိုနှိပ်ပြီး "
+                    "စတင်အသုံးပြုနိုင်ပါတယ်။"
+                ),
+                parse_mode="HTML",
             )
+        except Exception as e:
+            print("User notify error:", e)
 
-            return
+    else:
 
-        context.user_data[
-            "check_player_id"
-        ] = text
+        cur.execute("""
+            INSERT INTO bot_access
+            (user_id, status)
+            VALUES (?, 'rejected')
+            ON CONFLICT(user_id)
+            DO UPDATE SET status='rejected'
+        """, (user_id,))
 
-        context.user_data[
-            "state"
-        ] = "check_id_zone"
-
-        await update.message.reply_text(
-            "🌐 <b>Zone ID</b> ထည့်ပါ။\n\n"
-            "ဥပမာ: <code>2039</code>",
-            parse_mode="HTML",
+        message = (
+            "❌ <b>ACCESS REJECTED</b>\n"
+            f"🆔 <code>{user_id}</code>"
         )
 
-        return
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "❌ <b>Access Rejected</b>\n\n"
+                    "Admin မှ Bot အသုံးပြုခွင့် "
+                    "မပြုသေးပါ။"
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            print("User notify error:", e)
 
-    if state == "check_id_zone":
+    conn.commit()
+    conn.close()
 
-        await process_check_id(
-            update,
-            context,
-        )
+    await query.answer()
 
-        return
-
-    # -----------------------------------------------------
-    # ORDER FLOW
-    # -----------------------------------------------------
-
-    if state == "order_player_id":
-
-        await process_order_player_id(
-            update,
-            context,
-        )
-
-        return
-
-    if state == "order_zone_id":
-
-        await process_order_zone_id(
-            update,
-            context,
-        )
-
-        return
-
-    # -----------------------------------------------------
-    # UNKNOWN
-    # -----------------------------------------------------
-
-    await update.message.reply_text(
-        "❓ Menu ကနေရွေးပေးပါ။",
-        reply_markup=main_keyboard(),
-    )
-
-
-# =========================================================
-# COMMANDS
-# =========================================================
-
-async def help_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    text = (
-        "📖 <b>Help</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "💎 MLBB Diamonds — Diamond Top-Up\n"
-        "🔍 Check ML ID — Nickname စစ်ရန်\n"
-        "💰 Balance — API Balance\n"
-        "🔌 API Status — API Connection\n\n"
-        "/start — Main Menu"
-    )
-
-    await update.message.reply_text(
-        text,
+    await query.edit_message_text(
+        message,
         parse_mode="HTML",
-        reply_markup=main_keyboard(),
     )
 
 
 # =========================================================
-# ERROR HANDLER
+# HANDLERS
 # =========================================================
 
-async def error_handler(
-    update,
-    context,
-):
-
-    print(
-        "BOT ERROR:",
-        context.error,
+application.add_handler(
+    CommandHandler(
+        "start",
+        start_command,
     )
+)
 
+application.add_handler(
+    CallbackQueryHandler(
+        access_callback,
+        pattern=r"^(approve|reject):\d+$",
+    )
+)
 
 # =========================================================
-# MAIN
+# MAIN — RUN BOT
 # =========================================================
-
-def main():
-
-    if not BOT_TOKEN:
-        raise RuntimeError(
-            "BOT_TOKEN မတွေ့ပါ။ Railway Variables မှာ BOT_TOKEN ထည့်ပါ။"
-        )
-
-    if not MELO_API_KEY:
-        print(
-            "⚠️ MELO_API_KEY မတွေ့ပါ။"
-        )
-
-    if not MELO_SECRET_KEY:
-        print(
-            "⚠️ MELO_SECRET_KEY မတွေ့ပါ။"
-        )
-
-    print(
-        "🤖 Eren's Diamond Bot is starting..."
-    )
-
-    print(
-        "🧪 Sandbox:",
-        MELO_SANDBOX,
-    )
-
-    # Startup မှာ products မဆွဲသေးဘူး။
-    # Server ရွေးတဲ့အချိန်မှ API ကိုခေါ်မယ်။
-
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .build()
-    )
-
-    # Commands
-    app.add_handler(
-        CommandHandler(
-            "start",
-            start,
-        )
-    )
-
-    app.add_handler(
-        CommandHandler(
-            "help",
-            help_command,
-        )
-    )
-
-    # Inline buttons
-    app.add_handler(
-        CallbackQueryHandler(
-            callback_router,
-        )
-    )
-
-    # Reply keyboard / text
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT
-            & ~filters.COMMAND,
-            text_handler,
-        )
-    )
-
-    app.add_error_handler(
-        error_handler
-    )
-
-    print(
-        "✅ Bot is running!"
-    )
-
-    app.run_polling(
-        drop_pending_updates=True
-    )
-
 
 if __name__ == "__main__":
-    main()
+
+    print("✨ Eren's Diamond Bot Starting...")
+    print("👑 Admin ID:", ADMIN_ID)
+    print("🚀 Bot is running...")
+
+    application.run_polling(
+        drop_pending_updates=True
+)
