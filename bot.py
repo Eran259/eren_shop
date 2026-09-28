@@ -224,12 +224,22 @@ def api_get(path, params=None):
     url = MELO_BASE_URL + path
     try:
         response = requests.get(url, headers=api_headers(), params=params, timeout=60)
+        
+        # HTML Error Page ကို ဖမ်းပါ
+        if response.status_code >= 400:
+            if "text/html" in response.headers.get("Content-Type", ""):
+                return None, f"HTTP {response.status_code} - API Error (Endpoint မှားနေတာ ဖြစ်နိုင်ပါတယ်)"
+            try:
+                data = response.json()
+                return None, (data.get("message") or f"HTTP {response.status_code}")
+            except Exception:
+                return None, f"HTTP {response.status_code} - {response.text[:100]}"
+        
         try:
             data = response.json()
         except Exception:
             data = {"success": False, "message": response.text}
-        if response.status_code >= 400:
-            return None, (data.get("message") or f"HTTP {response.status_code}")
+        
         return data, None
     except requests.RequestException as e:
         return None, str(e)
@@ -240,12 +250,18 @@ def api_post(path, payload):
     headers["Content-Type"] = "application/json"
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=60)
+        if response.status_code >= 400:
+            if "text/html" in response.headers.get("Content-Type", ""):
+                return None, f"HTTP {response.status_code} - API Error"
+            try:
+                data = response.json()
+                return None, (data.get("message") or f"HTTP {response.status_code}")
+            except Exception:
+                return None, f"HTTP {response.status_code} - {response.text[:100]}"
         try:
             data = response.json()
         except Exception:
             data = {"success": False, "message": response.text}
-        if response.status_code >= 400:
-            return None, (data.get("message") or f"HTTP {response.status_code}")
         return data, None
     except requests.RequestException as e:
         return None, str(e)
@@ -348,6 +364,8 @@ def load_server_products(server):
     brands = meta.get("brands", [])
     brand_map = {str(x.get("id")): x.get("name", "") for x in brands if isinstance(x, dict)}
     
+    # Debug: Brand Map ကို Log ထုတ်ကြည့်ပါ
+    print(f"🏷️ Brand Map for {server}: {brand_map}")
     print(f"📦 API returned {len(rows)} products for {server}")
 
     products = []
@@ -362,7 +380,8 @@ def load_server_products(server):
         is_mlbb = (
             "mobile legends" in brand_text or
             "mobile legend" in brand_text or
-            "mlbb" in brand_text
+            "mlbb" in brand_text or
+            "ml " in brand_text
         )
         
         if not is_mlbb:
