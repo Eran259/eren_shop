@@ -188,24 +188,28 @@ async def handle_access_callback(update, context):
 # =========================================================
 # CUSTOMER MMK PRICE
 # =========================================================
-# ဒီနေရာမှာ မင်းရောင်းမယ့် MMK price တွေ ထည့်မယ်။
-# ဥပမာ:
-# MMK_PRICES = {
-#     "Global": {"78+8": 5000, "86": 5600},
-#     "Malaysia": {"78+8": 5200},
-#     "Indonesia": {"78+8": 5500},
-# }
-
 MMK_PRICES = {
     "Global": {},
-    "Malaysia": {},
     "Indonesia": {},
+    "Malaysia": {},
+    "Singapore": {},
+    "Turkey": {},
+    "Philippines": {},
+    "Brazil": {},
 }
 
 # =========================================================
 # RUNTIME CACHE
 # =========================================================
-PRODUCT_CACHE = {"Global": [], "Malaysia": [], "Indonesia": []}
+PRODUCT_CACHE = {
+    "Global": [],
+    "Indonesia": [],
+    "Malaysia": [],
+    "Singapore": [],
+    "Turkey": [],
+    "Philippines": [],
+    "Brazil": [],
+}
 LAST_PRODUCTS_LOAD = 0
 PRODUCT_CACHE_TTL = 300  # 5 မိနစ်
 PRODUCT_LOAD_LOCK = threading.Lock()
@@ -228,7 +232,7 @@ def api_get(path, params=None):
         # HTML Error Page ကို ဖမ်းပါ
         if response.status_code >= 400:
             if "text/html" in response.headers.get("Content-Type", ""):
-                return None, f"HTTP {response.status_code} - API Error (Endpoint မှားနေတာ ဖြစ်နိုင်ပါတယ်)"
+                return None, f"HTTP {response.status_code} - API Error"
             try:
                 data = response.json()
                 return None, (data.get("message") or f"HTTP {response.status_code}")
@@ -335,21 +339,13 @@ def _dedupe_products(products):
     return sorted(unique.values(), key=diamond_sort_key)
 
 # =========================================================
-# LOAD PRODUCTS FROM API (Support ရဲ့ အကြံပြုချက်အတိုင်း)
+# LOAD PRODUCTS FROM API
 # =========================================================
 def load_server_products(server):
     """
     Melostore H2H API မှ MLBB Products များကို ဆွဲထုတ်ပါ။
-    Support ရဲ့ အကြံပြုချက်အရ -
-    1. game_code ကို လုံးဝ မသုံးပါ။
-    2. limit=1000 ပဲ သုံးပါ။
-    3. meta.brands ထဲက brand_id နဲ့ Filter လုပ်ပါ။
     """
-    # game_code ကို လုံးဝ ဖျက်ထားပါတယ်။ limit ပဲ ထားပါတယ်။
-    params = {
-        "limit": 1000
-    }
-    
+    params = {"limit": 1000}
     data, error = api_get("/api/v1/h2h/pricelists", params=params)
     
     if error:
@@ -360,11 +356,9 @@ def load_server_products(server):
     rows = data.get("data", []) if isinstance(data, dict) else []
     meta = data.get("meta", {}) if isinstance(data, dict) else {}
     
-    # Brand ID ကို Brand Name အဖြစ် ပြောင်းပါ
     brands = meta.get("brands", [])
     brand_map = {str(x.get("id")): x.get("name", "") for x in brands if isinstance(x, dict)}
     
-    # Debug: Brand Map ကို Log ထုတ်ကြည့်ပါ
     print(f"🏷️ Brand Map for {server}: {brand_map}")
     print(f"📦 API returned {len(rows)} products for {server}")
 
@@ -372,35 +366,28 @@ def load_server_products(server):
     for product in rows:
         brand_id = str(product.get("brand_id", ""))
         brand_name = brand_map.get(brand_id, "")
-        
-        # Brand Name ကို စစ်ပါ
         brand_text = f"{brand_name} {product.get('name', '')} {product.get('type_name', '')}".lower()
-        
-        # MLBB Product ဟုတ်မဟုတ် စစ်ပါ
-        is_mlbb = (
-            "mobile legends" in brand_text or
-            "mobile legend" in brand_text or
-            "mlbb" in brand_text or
-            "ml " in brand_text
-        )
-        
-        if not is_mlbb:
-            continue
-        
-        # Server ကို Brand Name ကနေ ခွဲထုတ်ပါ
+
+        # Server အလိုက် Brand Name ကို စစ်ပါ
         product_server = None
-        if "indonesia" in brand_text:
-            product_server = "Indonesia"
-        elif "malaysia" in brand_text:
-            product_server = "Malaysia"
-        elif "global" in brand_text or "legacy" in brand_text:
+        if "global" in brand_text:
             product_server = "Global"
-        
-        # သင့် Bot က ရွေးထားတဲ့ Server နဲ့ တူမှသာ ထည့်ပါ
+        elif "indonesia" in brand_text or "(id)" in brand_text:
+            product_server = "Indonesia"
+        elif "malaysia" in brand_text or "(my)" in brand_text:
+            product_server = "Malaysia"
+        elif "singapore" in brand_text or "(sg)" in brand_text:
+            product_server = "Singapore"
+        elif "turkey" in brand_text or "(tr)" in brand_text:
+            product_server = "Turkey"
+        elif "philippines" in brand_text or "(ph)" in brand_text:
+            product_server = "Philippines"
+        elif "brazil" in brand_text or "(br)" in brand_text:
+            product_server = "Brazil"
+
         if product_server == server:
             item = dict(product)
             item["server"] = server
-            item["brand_name"] = brand_name
             item["amount"] = normalize_product_name(product.get("name", ""))
             if item["amount"]:
                 products.append(item)
@@ -470,8 +457,12 @@ def server_keyboard():
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("🌍 Global Server", callback_data="server:Global")],
-            [InlineKeyboardButton("🇲🇾 Malaysia Server", callback_data="server:Malaysia")],
             [InlineKeyboardButton("🇮🇩 Indonesia Server", callback_data="server:Indonesia")],
+            [InlineKeyboardButton("🇲🇾 Malaysia Server", callback_data="server:Malaysia")],
+            [InlineKeyboardButton("🇸🇬 Singapore Server", callback_data="server:Singapore")],
+            [InlineKeyboardButton("🇹🇷 Turkey Server", callback_data="server:Turkey")],
+            [InlineKeyboardButton("🇵🇭 Philippines Server", callback_data="server:Philippines")],
+            [InlineKeyboardButton("🇧🇷 Brazil Server", callback_data="server:Brazil")],
         ]
     )
 
@@ -781,7 +772,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("server:"):
         server = data.split(":", 1)[1]
-        if server not in ("Global", "Malaysia", "Indonesia"):
+        if server not in PRODUCT_CACHE:
             await query.answer("❌ Invalid server", show_alert=True)
             return
 
@@ -799,7 +790,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Build amount text
         lines = [
             f"💎 <b>{html.escape(server)} Server</b>",
             "━━━━━━━━━━━━━━━━━━━━",
