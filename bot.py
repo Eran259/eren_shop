@@ -35,6 +35,15 @@ MELO_BASE_URL = "https://api.melostore.id"
 MELO_SANDBOX = os.getenv("MELO_SANDBOX", "true").lower() == "true"
 
 # =========================================================
+# AUTO PRICE CALCULATOR
+# =========================================================
+# 1 USD = 17,700 MC (Melostore Rate)
+# 1 USDT = 4,500 MMK (သင့်ရောင်းဈေး)
+# 1 MC = 4,500 / 17,700 = 0.2542 MMK
+# အမြတ် 20% ထည့်ချင်ရင်: 0.2542 * 1.20 = 0.305 MMK
+MMK_RATE = 0.2542 * 1.20  # <--- ဒီနေရာမှာ အမြတ် % ပြင်နိုင်ပါတယ်
+
+# =========================================================
 # BOT ACCESS CONTROL
 # =========================================================
 ADMIN_ID = 5698123475
@@ -186,8 +195,10 @@ async def handle_access_callback(update, context):
     return True
 
 # =========================================================
-# CUSTOMER MMK PRICE
+# CUSTOMER MMK PRICE (Manual Override)
 # =========================================================
+# အကယ်၍ ဈေးကို ကိုယ်တိုင် သတ်မှတ်ချင်ရင် ဒီနေရာမှာ ထည့်ပါ။
+# မထည့်ရင် Auto Calculate (MMK_RATE) နဲ့ တွက်ပါမယ်။
 MMK_PRICES = {
     "Global": {},
     "Indonesia": {},
@@ -229,7 +240,6 @@ def api_get(path, params=None):
     try:
         response = requests.get(url, headers=api_headers(), params=params, timeout=60)
         
-        # HTML Error Page ကို ဖမ်းပါ
         if response.status_code >= 400:
             if "text/html" in response.headers.get("Content-Type", ""):
                 return None, f"HTTP {response.status_code} - API Error"
@@ -285,9 +295,13 @@ def clean_text(value):
     return str(value).strip()
 
 def normalize_product_name(name):
+    """Product Name ကို ရိုးရှင်းအောင် ပြောင်းပါ။"""
     name = clean_text(name)
+    # "Diamonds" ဆိုတဲ့ စာသားကို ဖျက်ပါ
     name = re.sub(r"(?i)\bdiamonds?\b", "", name)
     name = name.replace(" ", "")
+    
+    # "78+8" ပုံစံ
     match = re.search(r"(\d+(?:\.\d+)?)\+(\d+(?:\.\d+)?)", name)
     if match:
         a, b = match.group(1), match.group(2)
@@ -298,6 +312,8 @@ def normalize_product_name(name):
             except Exception:
                 return x
         return f"{fmt(a)}+{fmt(b)}"
+    
+    # "355" ပုံစံ
     match = re.search(r"(\d+(?:\.\d+)?)", name)
     if match:
         value = match.group(1)
@@ -307,6 +323,7 @@ def normalize_product_name(name):
         except Exception:
             pass
         return value
+    
     return name
 
 def diamond_sort_key(product):
@@ -344,6 +361,7 @@ def _dedupe_products(products):
 def load_server_products(server):
     """
     Melostore H2H API မှ MLBB Products များကို ဆွဲထုတ်ပါ။
+    Double Diamond / First Top Up Product တွေလည်း ပါအောင် Filter ဖြေလျှော့ထားပါတယ်။
     """
     params = {"limit": 1000}
     data, error = api_get("/api/v1/h2h/pricelists", params=params)
@@ -422,16 +440,32 @@ def ensure_server_products(server):
     return products, PRODUCT_LAST_ERROR.get(server) if not products else None
 
 # =========================================================
-# PRICE DISPLAY
+# PRICE CALCULATOR
 # =========================================================
-def get_mmk_price(server, amount):
+def get_mmk_price(server, amount, product=None):
+    """
+    MMK ဈေးကို ရှာပါ။
+    1. MMK_PRICES ထဲမှာ ရှိရင် အဲ့ဒါကို ယူပါ။
+    2. မရှိရင် API က ပြန်ပေးတဲ့ MC ဈေး * MMK_RATE နဲ့ တွက်ပါ။
+    """
+    # MMK_PRICES ထဲမှာ ရှိရင် အဲ့ဒါကို ယူပါ
     price = MMK_PRICES.get(server, {}).get(amount)
-    if price is None:
-        return None
-    try:
-        return int(price)
-    except Exception:
-        return price
+    if price is not None:
+        try:
+            return int(price)
+        except Exception:
+            return price
+
+    # MMK_PRICES ထဲမှာ မရှိရင် API က ပြန်ပေးတဲ့ MC ဈေးကို ယူပါ
+    if product:
+        mc_price = product.get("price")
+        if mc_price is not None:
+            try:
+                return int(float(mc_price) * MMK_RATE)
+            except Exception:
+                pass
+
+    return None
 
 def format_mmk(price):
     if price is None:
@@ -564,7 +598,7 @@ async def open_mlbb(update: Update):
         "🌍 Server ရွေးပါ။",
         parse_mode="HTML",
         reply_markup=server_keyboard(),
-    )
+        )
 
 # =========================================================
 # CHECK ID FLOW
@@ -655,7 +689,7 @@ async def process_order_zone_id(update: Update, context: ContextTypes.DEFAULT_TY
     server = context.user_data.get("server", "Global")
     product = context.user_data.get("product", {})
     amount = product.get("amount", "?")
-    price = get_mmk_price(server, amount)
+    price = get_mmk_price(server, amount, product)  # <--- product ထည့်ပါ
     price_text = format_mmk(price)
 
     text = (
@@ -708,7 +742,7 @@ async def confirm_order(query, context):
         return
 
     amount = product.get("amount", "?")
-    price = get_mmk_price(server, amount)
+    price = get_mmk_price(server, amount, product)  # <--- product ထည့်ပါ
 
     if price is None:
         await query.edit_message_text(
@@ -825,7 +859,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["server"] = server
         context.user_data["product"] = product
         amount = product.get("amount", "?")
-        price = get_mmk_price(server, amount)
+        price = get_mmk_price(server, amount, product)  # <--- product ထည့်ပါ
         sku = product.get("sku_code", "")
         context.user_data["sku"] = sku
         price_text = format_mmk(price)
@@ -966,6 +1000,7 @@ def main():
     init_access_db()
     print("🤖 Eren's Diamond Bot is starting...")
     print("🧪 Sandbox:", MELO_SANDBOX)
+    print(f"💱 MMK Rate: 1 MC = {MMK_RATE:.4f} MMK")
 
     app = Application.builder().token(BOT_TOKEN).build()
 
