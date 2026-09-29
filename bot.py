@@ -41,14 +41,11 @@ LICENSE_KEY = os.getenv("LICENSE_KEY", "")
 LICENSE_SECRET = "EREN_SHOP_SECRET_2026"
 
 # =========================================================
-# PRICE CALCULATOR
+# PRICE CONFIG
 # =========================================================
-MMK_RATE = 0.2542 * 1.20
-USD_TO_MMK = 4500
-PROFIT_MARGIN = 1.20
-USD_TO_MC = 17700
-USD_TO_IDR = 17000          # 1 USD = 17,000 IDR
-IDR_MICRO = 1000000         # IDR micro-units
+USD_TO_MMK = 4500           # 1 USD = 4,500 MMK
+PROFIT_MARGIN = 1.20        # 20% အမြတ်
+USD_TO_MC = 17700           # 1 USD = 17,700 MC
 
 MC_ALERT_THRESHOLD = 100
 
@@ -258,6 +255,71 @@ def set_user_api(user_id, api_key, secret_key):
         secret_key = ?,
         updated_at = CURRENT_TIMESTAMP
     """, (int(user_id), api_key, secret_key, api_key, secret_key))
+    conn.commit()
+    conn.close()
+
+# =========================================================
+# MANUAL PRICE DATABASE (MC + USD)
+# =========================================================
+MANUAL_PRICE_DB = "manual_price.db"
+
+def init_manual_price_db():
+    conn = sqlite3.connect(MANUAL_PRICE_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS manual_price (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server TEXT NOT NULL,
+        amount TEXT NOT NULL,
+        mc_price REAL NOT NULL,
+        usd_price REAL NOT NULL,
+        mmk_price INTEGER NOT NULL,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(server, amount)
+    )""")
+    conn.commit()
+    conn.close()
+
+def get_manual_price(server, amount):
+    conn = sqlite3.connect(MANUAL_PRICE_DB)
+    row = conn.execute(
+        "SELECT mc_price, usd_price, mmk_price FROM manual_price WHERE server=? AND amount=?",
+        (server, amount)
+    ).fetchone()
+    conn.close()
+    if row:
+        return {"mc_price": row[0], "usd_price": row[1], "mmk_price": row[2]}
+    return None
+
+def set_manual_price(server, amount, mc_price, usd_price, mmk_price):
+    conn = sqlite3.connect(MANUAL_PRICE_DB)
+    conn.execute("""INSERT INTO manual_price (server, amount, mc_price, usd_price, mmk_price, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(server, amount) DO UPDATE SET
+        mc_price = ?,
+        usd_price = ?,
+        mmk_price = ?,
+        updated_at = CURRENT_TIMESTAMP
+    """, (server, amount, float(mc_price), float(usd_price), int(mmk_price),
+          float(mc_price), float(usd_price), int(mmk_price)))
+    conn.commit()
+    conn.close()
+
+def get_all_manual_prices(server=None):
+    conn = sqlite3.connect(MANUAL_PRICE_DB)
+    if server:
+        rows = conn.execute(
+            "SELECT server, amount, mc_price, usd_price, mmk_price FROM manual_price WHERE server=? ORDER BY amount",
+            (server,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT server, amount, mc_price, usd_price, mmk_price FROM manual_price ORDER BY server, amount"
+        ).fetchall()
+    conn.close()
+    return rows
+
+def delete_manual_price(server, amount):
+    conn = sqlite3.connect(MANUAL_PRICE_DB)
+    conn.execute("DELETE FROM manual_price WHERE server=? AND amount=?", (server, amount))
     conn.commit()
     conn.close()
 
@@ -534,7 +596,6 @@ def normalize_product_name(name):
     return name
 
 def format_amount_for_display(amount):
-    """1.045 -> 1,045"""
     try:
         if "." in str(amount):
             f = float(amount)
@@ -653,9 +714,15 @@ def ensure_server_products(server):
     return products, PRODUCT_LAST_ERROR.get(server) if not products else None
 
 # =========================================================
-# PRICE CALCULATOR (IDR micro -> IDR -> USD -> MMK)
+# PRICE (Manual Only)
 # =========================================================
 def get_mmk_price(server, amount, product=None):
+    # Manual Price Database ကနေ ယူပါ
+    manual = get_manual_price(server, amount)
+    if manual:
+        return int(manual["mmk_price"])
+
+    # Code ထဲက MMK_PRICES ကို ယူပါ (အကယ်၍ Database မှာ မရှိရင်)
     price = MMK_PRICES.get(server, {}).get(amount)
     if price is not None:
         try:
@@ -663,33 +730,7 @@ def get_mmk_price(server, amount, product=None):
         except Exception:
             return price
 
-    if product:
-        raw_price = product.get("price")
-        if raw_price is not None:
-            try:
-                raw_price = float(raw_price)
-                # IDR micro-units -> IDR
-                idr_price = raw_price / IDR_MICRO
-                # IDR -> USD
-                usd_price = idr_price / USD_TO_IDR
-                # USD -> MMK
-                mmk_price = usd_price * USD_TO_MMK * PROFIT_MARGIN
-                if mmk_price < 100:
-                    mmk_price = 100
-                mmk_price = round(mmk_price / 100) * 100
-                return int(mmk_price)
-            except Exception:
-                pass
     return None
-
-def get_usd_price(product):
-    """IDR micro -> USD"""
-    try:
-        raw_price = float(product.get("price", 0))
-        idr_price = raw_price / IDR_MICRO
-        return idr_price / USD_TO_IDR
-    except Exception:
-        return 0.0
 
 def format_mmk(price):
     if price is None:
@@ -764,12 +805,19 @@ def amount_keyboard(server, is_admin=False):
         display_amount = format_amount_for_display(amount)
 
         if is_admin:
-            usd_price = get_usd_price(product)
-            mc_price = usd_price * USD_TO_MC
-            price_text = f"${usd_price:.3f} ({mc_price:.2f} MC)"
+            # Admin ဆိုရင် MC + $ ပြပါ
+            manual = get_manual_price(server, amount)
+            if manual:
+                price_text = f"{manual['mc_price']:.3f} MC (${manual['usd_price']:.3f})"
+            else:
+                price_text = "Price မသတ်မှတ်ရသေး"
         else:
+            # User ဆိုရင် MMK ပြပါ
             mmk_price = get_mmk_price(server, amount, product)
-            price_text = format_mmk(mmk_price)
+            if mmk_price is None:
+                price_text = "Price မသတ်မှတ်ရသေး"
+            else:
+                price_text = f"{mmk_price:,} MMK"
 
         button_text = f"💎 {display_amount} • {price_text}"
         button = InlineKeyboardButton(button_text, callback_data=f"amount:{server}:{index}")
@@ -913,11 +961,16 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🪙 MC Balance: <b>{balance:,.2f} MC</b>\n"
         f"💵 USD Value: <b>${usd:,.2f}</b>\n\n"
-        "💡 <b>Commands</b>\n"
+        "💡 <b>Balance Commands</b>\n"
         "/addbalance USER_ID AMOUNT — User Balance ဖြည့်\n"
         "/checkbalance USER_ID — User Balance ကြည့်\n"
         "/addsub USER_ID — Subscription ဖြည့်\n"
-        "/checksub USER_ID — Subscription ကြည့်"
+        "/checksub USER_ID — Subscription ကြည့်\n\n"
+        "💰 <b>Price Commands</b>\n"
+        "/setprice SERVER AMOUNT MC USD — ဈေးသတ်မှတ်\n"
+        "/delprice SERVER AMOUNT — ဈေးဖျက်\n"
+        "/listprices SERVER — ဈေးစာရင်း\n\n"
+        "📐 <b>Formula:</b> MMK = USD × 4,500 × 1.20"
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
@@ -1243,7 +1296,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "",
                 f"📦 {len(products)} Packages Available",
                 "",
-                "💡 <b>Format:</b> Amount • USD (MC)",
+                "💡 <b>Format:</b> Amount • MC ($)",
                 "",
                 "👇 အောက်က Button ကနေ Amount ရွေးပါ။",
             ]
@@ -1295,10 +1348,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_balance = get_user_balance(user_id)
 
         if user_id == ADMIN_ID:
-            usd_price = get_usd_price(product)
-            mc_price = usd_price * USD_TO_MC
-            usd_text = f"${usd_price:.3f}"
-            mc_text = f"{mc_price:.3f} MC"
+            manual = get_manual_price(server, amount)
+            if manual:
+                mc_text = f"{manual['mc_price']:.3f} MC"
+                usd_text = f"${manual['usd_price']:.3f}"
+            else:
+                mc_text = "N/A"
+                usd_text = "N/A"
 
             text = (
                 "💎 <b>Selected Product</b> (Admin View)\n"
@@ -1670,6 +1726,32 @@ async def check_subscription_command(update: Update, context: ContextTypes.DEFAU
         parse_mode="HTML",
     )
 
+# =========================================================
+# PRICE COMMANDS (Admin)
+# =========================================================
+async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    server = args[0] if args else None
+
+    rows = get_all_manual_prices(server)
+
+    if not rows:
+        await update.message.reply_text("📭 Price မရှိသေးပါ။")
+        return
+
+    lines = ["💰 <b>Manual Prices</b>\n━━━━━━━━━━━━━━━━━━━━"]
+    current_server = None
+    for srv, amt, mc, usd, mmk in rows:
+        if srv != current_server:
+            lines.append(f"\n🌍 <b>{srv}</b>")
+            current_server = srv
+        lines.append(f"  💎 {amt} → {mc:.3f} MC / ${usd:.3f} → <b>{mmk:,} MMK</b>")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
 async def error_handler(update, context):
     error = context.error
     print("BOT ERROR:", error)
@@ -1678,14 +1760,17 @@ async def error_handler(update, context):
         print("⚠️ Conflict Error: Bot Token ကို နေရာနှစ်ခုမှာ Run နေပါတယ်။")
         print("⚠️ Bot Token ကို Revoke လုပ်ပြီး အသစ်ယူပါ။")
 
+
 # =========================================================
 # POST INIT / SHUTDOWN
 # =========================================================
 async def post_init(application: Application):
     print("✅ Bot initialized successfully!")
 
+
 async def post_shutdown(application: Application):
     print("🛑 Bot shutting down...")
+
 
 # =========================================================
 # MAIN
@@ -1717,10 +1802,12 @@ def main():
     init_balance_db()
     init_subscription_db()
     init_user_api_db()
+    init_manual_price_db()
 
     print("🤖 Eren's Diamond Bot is starting...")
     print("🧪 Sandbox:", MELO_SANDBOX)
-    print(f"💱 MMK Rate: 1 MC = {MMK_RATE:.4f} MMK")
+    print(f"💱 USD Rate: 1 USD = {USD_TO_MMK:,} MMK")
+    print(f"💹 Profit Margin: {PROFIT_MARGIN:.2f}x")
     print(f"⚠️ MC Alert Threshold: {MC_ALERT_THRESHOLD} MC")
 
     app = (
@@ -1737,6 +1824,9 @@ def main():
     app.add_handler(CommandHandler("checkbalance", check_balance_command))
     app.add_handler(CommandHandler("addsub", add_subscription_command))
     app.add_handler(CommandHandler("checksub", check_subscription_command))
+    app.add_handler(CommandHandler("setprice", set_price_command))
+    app.add_handler(CommandHandler("delprice", delete_price_command))
+    app.add_handler(CommandHandler("listprices", list_prices_command))
 
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
