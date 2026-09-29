@@ -40,9 +40,6 @@ MELO_SANDBOX = os.getenv("MELO_SANDBOX", "true").lower() == "true"
 LICENSE_KEY = os.getenv("LICENSE_KEY", "")
 LICENSE_SECRET = "EREN_SHOP_SECRET_2026"
 
-# =========================================================
-# PRICE CONFIG
-# =========================================================
 USD_TO_MMK = 4500
 PROFIT_MARGIN = 1.20
 USD_TO_MC = 17700
@@ -138,9 +135,6 @@ def deduct_user_balance(user_id, amount):
     conn.close()
     return affected > 0
 
-# =========================================================
-# SUBSCRIPTION DATABASE
-# =========================================================
 SUBSCRIPTION_DB = "subscription.db"
 
 def init_subscription_db():
@@ -185,9 +179,6 @@ def is_subscription_active(user_id):
     except Exception:
         return False
 
-# =========================================================
-# LICENSE KEY
-# =========================================================
 def generate_license_key(user_id, expiry_date):
     data = f"{user_id}|{expiry_date}"
     signature = hmac.new(
@@ -216,9 +207,6 @@ def validate_license_key(license_key):
     except Exception:
         return None
 
-# =========================================================
-# USER API KEY DATABASE
-# =========================================================
 USER_API_DB = "user_api.db"
 
 def init_user_api_db():
@@ -252,9 +240,6 @@ def set_user_api(user_id, api_key, secret_key):
     conn.commit()
     conn.close()
 
-# =========================================================
-# MANUAL PRICE DATABASE
-# =========================================================
 MANUAL_PRICE_DB = "manual_price.db"
 
 def init_manual_price_db():
@@ -317,9 +302,6 @@ def delete_manual_price(server, amount):
     conn.commit()
     conn.close()
 
-# =========================================================
-# ACCESS REQUEST
-# =========================================================
 async def request_access(update, context, force_request=False):
     user = update.effective_user
     if not user:
@@ -448,12 +430,8 @@ async def handle_access_callback(update, context):
 
     return True
 
-# =========================================================
-# CUSTOMER MMK PRICE (Fallback)
-# =========================================================
 MMK_PRICES = {
     "Global": {},
-    "Indonesia": {},
     "Malaysia": {},
     "Singapore": {},
     "Turkey": {},
@@ -461,12 +439,8 @@ MMK_PRICES = {
     "Brazil": {},
 }
 
-# =========================================================
-# RUNTIME CACHE
-# =========================================================
 PRODUCT_CACHE = {
     "Global": [],
-    "Indonesia": [],
     "Malaysia": [],
     "Singapore": [],
     "Turkey": [],
@@ -478,9 +452,6 @@ PRODUCT_CACHE_TTL = 300
 PRODUCT_LOAD_LOCK = threading.Lock()
 PRODUCT_LAST_ERROR = {}
 
-# =========================================================
-# API HELPERS
-# =========================================================
 def api_headers(user_id=None):
     if user_id:
         user_api = get_user_api(user_id)
@@ -556,9 +527,6 @@ def get_profile(user_id=None):
 def get_balance(user_id=None):
     return api_get("/api/v1/h2h/profile/balance", user_id=user_id)
 
-# =========================================================
-# TEXT HELPERS
-# =========================================================
 def clean_text(value):
     if value is None:
         return ""
@@ -610,30 +578,6 @@ def diamond_sort_key(product):
             pass
     return 999999999
 
-def _dedupe_products(products):
-    unique = {}
-    for product in products:
-        amount = product.get("amount")
-        if not amount:
-            continue
-        server_code = product.get("server_code", "")
-        key = f"{amount}|{server_code}"
-        old = unique.get(key)
-        if old is None:
-            unique[key] = product
-            continue
-        try:
-            new_price = float(product.get("price", 999999999))
-            old_price = float(old.get("price", 999999999))
-            if new_price < old_price:
-                unique[key] = product
-        except Exception:
-            pass
-    return sorted(unique.values(), key=diamond_sort_key)
-
-# =========================================================
-# LOAD PRODUCTS FROM API
-# =========================================================
 def load_server_products(server):
     params = {"limit": 1000}
     data, error = api_get("/api/v1/h2h/pricelists", params=params)
@@ -709,9 +653,6 @@ def ensure_server_products(server):
     products = PRODUCT_CACHE.get(server, [])
     return products, PRODUCT_LAST_ERROR.get(server) if not products else None
 
-# =========================================================
-# PRICE (Manual Only)
-# =========================================================
 def get_mmk_price(server, amount, product=None):
     manual = get_manual_price(server, amount)
     if manual:
@@ -734,9 +675,6 @@ def format_mmk(price):
     except Exception:
         return f"{price} MMK"
 
-# =========================================================
-# MC BALANCE ALERT
-# =========================================================
 async def check_mc_balance_alert(context, current_mc):
     if current_mc < MC_ALERT_THRESHOLD:
         try:
@@ -754,9 +692,6 @@ async def check_mc_balance_alert(context, current_mc):
         except Exception as e:
             print("MC ALERT ERROR:", e)
 
-# =========================================================
-# KEYBOARDS
-# =========================================================
 def main_keyboard():
     return ReplyKeyboardMarkup(
         [
@@ -1201,12 +1136,40 @@ async def confirm_order(query, context):
 
     if error:
         await query.edit_message_text(f"❌ <b>Order Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
+        
+        # Admin ဆီ Fail Alarm ပို့ပါ
+        try:
+            user_obj = query.from_user
+            username = f"@{user_obj.username}" if user_obj.username else "—"
+            first_name = user_obj.first_name or "User"
+            order_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    "❌ <b>ORDER FAILED!</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"👤 Name: <b>{html.escape(first_name)}</b>\n"
+                    f"🔗 Username: <b>{html.escape(username)}</b>\n"
+                    f"🆔 User ID: <code>{user_id}</code>\n\n"
+                    f"🌍 Server: <b>{html.escape(str(server))}</b>\n"
+                    f"💎 Diamond: <b>{html.escape(display_amount)}</b>\n"
+                    f"💰 Price: <b>{format_mmk(price)}</b>\n\n"
+                    f"⚠️ <b>Error:</b>\n{html.escape(str(error))}\n\n"
+                    f"⏰ Time: <code>{order_time}</code>"
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            print("FAIL ALARM ERROR:", e)
+
         context.user_data.clear()
         return
 
     result = data.get("data", {})
     transaction_id = result.get("id", "-")
     status = result.get("status", "pending")
+    order_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     if deduct_user_balance(user_id, price):
         new_balance = get_user_balance(user_id)
@@ -1229,6 +1192,54 @@ async def confirm_order(query, context):
         "⚡ Powered by Eren"
     )
     await query.edit_message_text(text, parse_mode="HTML")
+
+    # =========================================================
+    # ADMIN ORDER ALARM
+    # =========================================================
+    try:
+        user_obj = query.from_user
+        username = f"@{user_obj.username}" if user_obj.username else "—"
+        first_name = user_obj.first_name or "User"
+        
+        manual = get_manual_price(server, amount)
+        mc_cost = manual["mc_price"] if manual else 0
+        usd_cost = manual["usd_price"] if manual else 0
+
+        alarm_text = (
+            "🔔 <b>NEW DIAMOND ORDER!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "👤 <b>Customer Info</b>\n"
+            f"  • Name: <b>{html.escape(first_name)}</b>\n"
+            f"  • Username: <b>{html.escape(username)}</b>\n"
+            f"  • User ID: <code>{user_id}</code>\n\n"
+            "🎮 <b>Game Info</b>\n"
+            f"  • Server: <b>{html.escape(str(server))}</b>\n"
+            f"  • Nickname: <b>{html.escape(str(nickname))}</b>\n"
+            f"  • Player ID: <code>{html.escape(str(player_id))}</code>\n"
+            f"  • Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
+            "💎 <b>Order Info</b>\n"
+            f"  • Diamond: <b>{html.escape(display_amount)}</b>\n"
+            f"  • MMK Price: <b>{format_mmk(price)}</b>\n"
+            f"  • MC Cost: <b>{mc_cost:.3f} MC</b>\n"
+            f"  • USD Cost: <b>${usd_cost:.3f}</b>\n\n"
+            "🧾 <b>Transaction</b>\n"
+            f"  • Trx ID: <code>{html.escape(str(transaction_id))}</code>\n"
+            f"  • Status: <b>{html.escape(str(status).upper())}</b>\n"
+            f"  • Time: <code>{order_time}</code>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "⚡ Powered by Eren"
+        )
+
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=alarm_text,
+            parse_mode="HTML",
+        )
+        print(f"✅ Order Alarm Sent: {transaction_id}")
+
+    except Exception as e:
+        print("ORDER ALARM ERROR:", e)
+
     context.user_data.clear()
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
