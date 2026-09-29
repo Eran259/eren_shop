@@ -572,8 +572,11 @@ def clean_text(value):
 
 def normalize_product_name(name):
     name = clean_text(name)
+    # "Diamonds" ကို ဖျက်ပါ
     name = re.sub(r"(?i)\bdiamonds?\b", "", name)
     name = name.replace(" ", "")
+    
+    # "78+8" ပုံစံ
     match = re.search(r"(\d+(?:\.\d+)?)\+(\d+(?:\.\d+)?)", name)
     if match:
         a, b = match.group(1), match.group(2)
@@ -584,6 +587,8 @@ def normalize_product_name(name):
             except Exception:
                 return x
         return f"{fmt(a)}+{fmt(b)}"
+    
+    # "355" ပုံစံ
     match = re.search(r"(\d+(?:\.\d+)?)", name)
     if match:
         value = match.group(1)
@@ -593,6 +598,8 @@ def normalize_product_name(name):
         except Exception:
             pass
         return value
+    
+    # "WeeklyPass", "BPCard" စတဲ့ Name တွေကို မဖျက်ပါ
     return name
 
 def format_amount_for_display(amount):
@@ -617,20 +624,27 @@ def diamond_sort_key(product):
     return 999999999
 
 def _dedupe_products(products):
+    """
+    Server Code အလိုက် ခွဲပြီး ဈေးအသက်သာဆုံးကို ယူပါ။
+    """
     unique = {}
     for product in products:
         amount = product.get("amount")
         if not amount:
             continue
-        old = unique.get(amount)
+        # Server Code ကို Key ထဲ ထည့်ပါ
+        server_code = product.get("server_code", "")
+        key = f"{amount}|{server_code}"
+        
+        old = unique.get(key)
         if old is None:
-            unique[amount] = product
+            unique[key] = product
             continue
         try:
             new_price = float(product.get("price", 999999999))
             old_price = float(old.get("price", 999999999))
             if new_price < old_price:
-                unique[amount] = product
+                unique[key] = product
         except Exception:
             pass
     return sorted(unique.values(), key=diamond_sort_key)
@@ -685,7 +699,7 @@ def load_server_products(server):
                 products.append(item)
 
     print(f"✅ Filtered {len(products)} MLBB products for {server}")
-    return _dedupe_products(products), None
+return sorted(products, key=diamond_sort_key), name
 
 def refresh_products(server=None, force=False):
     global PRODUCT_CACHE, LAST_PRODUCTS_LOAD
