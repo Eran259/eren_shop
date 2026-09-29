@@ -45,16 +45,12 @@ LICENSE_SECRET = "EREN_SHOP_SECRET_2026"
 # =========================================================
 # PRICE CALCULATOR
 # =========================================================
-# 1 USD = 17,700 MC (Melostore Rate)
-# 1 USDT = 4,500 MMK (သင့်ရောင်းဈေး)
-# 1 MC = 4,500 / 17,700 = 0.2542 MMK
-# အမြတ် 20% ထည့်ချင်ရင်: 0.2542 * 1.20 = 0.305 MMK
-MMK_RATE = 0.2542 * 1.20  # <--- ဒီနေရာမှာ အမြတ် % ပြင်နိုင်ပါတယ်
+MMK_RATE = 0.2542 * 1.20  # 1 MC = ? MMK (20% အမြတ်)
 USD_TO_MMK = 4500           # 1 USDT = ? MMK
 PROFIT_MARGIN = 1.20        # 20% အမြတ်
 
 # MC Balance သတိပေးမည့် ပမာဏ
-MC_ALERT_THRESHOLD = 100  # 100 MC အောက်ရောက်ရင် သတိပေး
+MC_ALERT_THRESHOLD = 100
 
 # =========================================================
 # BOT ACCESS CONTROL
@@ -263,132 +259,6 @@ def set_user_api(user_id, api_key, secret_key):
     """, (int(user_id), api_key, secret_key, api_key, secret_key))
     conn.commit()
     conn.close()
-
-# =========================================================
-# ACCESS REQUEST (Subscription ကို နောက်မှ စစ်)
-# =========================================================
-async def request_access(update, context, force_request=False):
-    user = update.effective_user
-    if not user:
-        return False
-    if user.id == ADMIN_ID:
-        return True
-
-    # Access Status ကို အရင်စစ်ပါ
-    status = get_access_status(user.id)
-
-    # Access မရသေးရင် Request ပို့ပါ
-    if status is None or (force_request and status in ("pending", "rejected")):
-        save_access_request(user.id, user.username, user.first_name)
-        username = f"@{user.username}" if user.username else "—"
-        admin_text = (
-            "🔔 <b>NEW USER ACCESS REQUEST</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👤 Name: <b>{html.escape(user.first_name or '—')}</b>\n"
-            f"🔗 Username: <b>{html.escape(username)}</b>\n"
-            f"🆔 User ID: <code>{user.id}</code>\n\n"
-            "⚠️ ဒီ user ကို Bot အသုံးပြုခွင့်ပေးမလား?"
-        )
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=admin_text,
-                parse_mode="HTML",
-                reply_markup=access_request_keyboard(user.id),
-            )
-        except Exception as e:
-            print("ACCESS REQUEST SEND ERROR:", e)
-
-    if status == "rejected" and not force_request:
-        msg = "❌ <b>Access Denied</b>\n\nAdmin က ဒီ Bot ကိုအသုံးပြုခွင့် မပေးသေးပါ။\n\n/start နှိပ်ပြီး Request ပြန်ပို့နိုင်ပါတယ်။"
-        if update.message:
-            await update.message.reply_text(msg, parse_mode="HTML")
-        return False
-
-    if status == "pending":
-        msg = (
-            "⏳ <b>Access Pending</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "သင့် Request ကို Admin ဆီ ပို့ထားပါတယ်။\n"
-            "Approve ဖြစ်တဲ့အခါ Bot ကို အသုံးပြုနိုင်ပါမယ်။"
-        )
-        if update.message:
-            await update.message.reply_text(msg, parse_mode="HTML")
-        return False
-
-    # Access approved ဖြစ်ရင် Subscription စစ်ပါ
-    if status == "approved":
-        if not is_subscription_active(user.id):
-            msg = (
-                "⚠️ <b>ငွေဆောင်ရန် လိုအပ်ပါတယ်။</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                "သင့် Bot အသုံးပြုခွင့် သက်တမ်း ကုန်ဆုံးသွားပါပြီ။\n\n"
-                "💳 <b>လစဉ်ကြေး: 15,000 MMK</b>\n\n"
-                "📌 ငွေလွှဲရန်:\n"
-                "💙 K Pay: <code>09766605879</code> (TNS)\n"
-                "💛 AYA Pay: <code>09678664100</code> (HHS)\n"
-                "💚 UAB Pay: <code>09425160424</code> (TNS)\n\n"
-                "📸 ငွေလွှဲပြီးရင် Screenshot ကို ဒီ Chat မှာ ပို့ပါ။"
-            )
-            if update.message:
-                await update.message.reply_text(msg, parse_mode="HTML")
-            return False
-        return True
-
-    return False
-
-async def handle_access_callback(update, context):
-    query = update.callback_query
-    if query.from_user.id != ADMIN_ID:
-        await query.answer("❌ Admin only", show_alert=True)
-        return True
-    parts = (query.data or "").split(":")
-    if len(parts) != 3:
-        await query.answer("Invalid request", show_alert=True)
-        return True
-    action, uid_text = parts[1], parts[2]
-    try:
-        user_id = int(uid_text)
-    except ValueError:
-        await query.answer("Invalid user ID", show_alert=True)
-        return True
-    if action == "approve":
-        status = "approved"
-    elif action == "reject":
-        status = "rejected"
-    else:
-        return True
-    set_access_status(user_id, status)
-    label = "✅ APPROVED" if status == "approved" else "❌ REJECTED"
-    try:
-        await query.edit_message_text(
-            (query.message.text or "") + f"\n\n<b>{label}</b>",
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
-    if status == "approved":
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="✅ <b>Access Approved!</b>\n\n✨ Eren's Diamond Bot ကို အခုအသုံးပြုနိုင်ပါပြီ။\n/start နှိပ်ပြီး စတင်ပါ။",
-                parse_mode="HTML",
-                reply_markup=main_keyboard(),
-            )
-        except Exception as e:
-            print("APPROVAL DM ERROR:", e)
-        await query.answer("User approved ✅")
-    else:
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="❌ <b>Access Denied</b>\n\nAdmin က ဒီ Bot ကိုအသုံးပြုခွင့် မပေးသေးပါ။",
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            print("REJECTION DM ERROR:", e)
-        await query.answer("User rejected ❌")
-    return True
 
 # =========================================================
 # CUSTOMER MMK PRICE (Manual Override)
@@ -862,7 +732,28 @@ async def open_mlbb(update: Update):
         "🌍 Server ရွေးပါ။",
         parse_mode="HTML",
         reply_markup=server_keyboard(),
-        )
+    )
+
+async def show_api_status(update: Update):
+    data, error = get_profile()
+    if error:
+        await update.message.reply_text(f"🔴 <b>API Offline / Error</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
+        return
+    info = data.get("data", {})
+    tier = info.get("tier", {})
+    tier_name = tier.get("name", "Unknown")
+    sandbox = info.get("is_sandbox_mode", False)
+    status = "🧪 Sandbox Mode" if sandbox else "🟢 Production Mode"
+    text = (
+        "🔌 <b>Melostore API Status</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🟢 Connection: <b>Connected</b>\n"
+        f"🏷️ Tier: <b>{html.escape(str(tier_name))}</b>\n"
+        f"⚙️ Mode: <b>{status}</b>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "⚡ Powered by Eren"
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
 
 # =========================================================
 # CHECK ID FLOW
@@ -956,7 +847,6 @@ async def process_order_zone_id(update: Update, context: ContextTypes.DEFAULT_TY
     price = get_mmk_price(server, amount, product)
     price_text = format_mmk(price)
 
-    # User Balance စစ်ပါ
     user_id = update.effective_user.id
     user_balance = get_user_balance(user_id)
     balance_warning = ""
@@ -1030,7 +920,6 @@ async def confirm_order(query, context):
         context.user_data.clear()
         return
 
-    # User Balance စစ်ပါ
     user_balance = get_user_balance(user_id)
     if user_balance < price:
         await query.edit_message_text(
@@ -1055,7 +944,6 @@ async def confirm_order(query, context):
     transaction_id = result.get("id", "-")
     status = result.get("status", "pending")
 
-    # User Balance နုတ်ပါ
     if deduct_user_balance(user_id, price):
         new_balance = get_user_balance(user_id)
     else:
@@ -1105,7 +993,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("❌ Invalid server", show_alert=True)
             return
 
-        # Admin ဆိုရင် MC Balance မစစ်ဘူး
         if query.from_user.id != ADMIN_ID:
             bal_data, bal_error = get_balance()
             if not bal_error:
@@ -1288,8 +1175,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.photo:
         return
-    if not await request_access(update, context):
-        return
 
     user = update.effective_user
     file_id = update.message.photo[-1].file_id
@@ -1381,27 +1266,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================================================
 # COMMANDS
 # =========================================================
-async def show_api_status(update: Update):
-    data, error = get_profile()
-    if error:
-        await update.message.reply_text(f"🔴 <b>API Offline / Error</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
-        return
-    info = data.get("data", {})
-    tier = info.get("tier", {})
-    tier_name = tier.get("name", "Unknown")
-    sandbox = info.get("is_sandbox_mode", False)
-    status = "🧪 Sandbox Mode" if sandbox else "🟢 Production Mode"
-    text = (
-        "🔌 <b>Melostore API Status</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🟢 Connection: <b>Connected</b>\n"
-        f"🏷️ Tier: <b>{html.escape(str(tier_name))}</b>\n"
-        f"⚙️ Mode: <b>{status}</b>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "⚡ Powered by Eren"
-    )
-    await update.message.reply_text(text, parse_mode="HTML")
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await request_access(update, context):
         return
@@ -1546,8 +1410,25 @@ async def check_subscription_command(update: Update, context: ContextTypes.DEFAU
         parse_mode="HTML",
     )
 
+# =========================================================
+# ERROR HANDLER (Conflict Error ကို Handle လုပ်တယ်)
+# =========================================================
 async def error_handler(update, context):
-    print("BOT ERROR:", context.error)
+    error = context.error
+    print("BOT ERROR:", error)
+
+    if "Conflict" in str(error):
+        print("⚠️ Conflict Error: Bot Token ကို နေရာနှစ်ခုမှာ Run နေပါတယ်။")
+        print("⚠️ Bot Token ကို Revoke လုပ်ပြီး အသစ်ယူပါ။")
+
+# =========================================================
+# POST INIT / SHUTDOWN
+# =========================================================
+async def post_init(application: Application):
+    print("✅ Bot initialized successfully!")
+
+async def post_shutdown(application: Application):
+    print("🛑 Bot shutting down...")
 
 # =========================================================
 # MAIN
@@ -1560,7 +1441,6 @@ def main():
     if not MELO_SECRET_KEY:
         print("⚠️ MELO_SECRET_KEY မတွေ့ပါ။")
 
-    # License Key စစ်ပါ (optional)
     if LICENSE_KEY:
         license_info = validate_license_key(LICENSE_KEY)
         if not license_info:
@@ -1576,7 +1456,6 @@ def main():
             print(f"❌ License Error: {e}")
             return
 
-    # Database Init
     init_access_db()
     init_balance_db()
     init_subscription_db()
@@ -1587,9 +1466,14 @@ def main():
     print(f"💱 MMK Rate: 1 MC = {MMK_RATE:.4f} MMK")
     print(f"⚠️ MC Alert Threshold: {MC_ALERT_THRESHOLD} MC")
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
 
-    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("addbalance", add_balance_command))
@@ -1597,16 +1481,9 @@ def main():
     app.add_handler(CommandHandler("addsub", add_subscription_command))
     app.add_handler(CommandHandler("checksub", check_subscription_command))
 
-    # Callback
     app.add_handler(CallbackQueryHandler(callback_router))
-
-    # Photo (Deposit Screenshot)
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-
-    # Text
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-
-    # Error Handler
     app.add_error_handler(error_handler)
 
     print("✅ Bot is running!")
