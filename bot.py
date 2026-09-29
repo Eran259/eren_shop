@@ -528,6 +528,7 @@ def get_profile(user_id=None):
 def get_balance(user_id=None):
     return api_get("/api/v1/h2h/profile/balance", user_id=user_id)
 
+
 def clean_text(value):
     if value is None:
         return ""
@@ -556,11 +557,7 @@ def diamond_sort_key(product):
             pass
     return 999999999
 
-
 def load_server_products(server):
-    """
-    Smart Pricelist endpoint ကနေ products တွေ load လုပ်ပါ
-    """
     params = {"limit": 1000}
     data, error = api_get("/api/v1/h2h/smart-pricelists", params=params)
     if error:
@@ -583,11 +580,9 @@ def load_server_products(server):
         brand_name = brand_map.get(brand_id, "")
         name_text = f"{brand_name} {product.get('name', '')} {product.get('type_name', '')}".lower()
 
-        # MLBB filter
         if "ml diamonds" not in name_text and "mobile legends" not in name_text:
             continue
 
-        # Server filter
         product_server = None
         if "mobile legends (indonesia)" in name_text or "(id)" in name_text:
             product_server = "Global"
@@ -607,7 +602,6 @@ def load_server_products(server):
         if product_server != server:
             continue
 
-        # Diamond Amount ကို name ကနေ ဆွဲထုတ်
         name = product.get("name", "")
         match = re.search(r"(\d+(?:\.\d+)?)\s*Diamonds?", name, re.IGNORECASE)
         if match:
@@ -618,12 +612,10 @@ def load_server_products(server):
             except Exception:
                 amount = raw
         else:
-            # "Weekly Pass" လိုမျိုး
             amount = re.sub(r"(?i)\bmobile\s*legends?\b", "", name)
             amount = re.sub(r"(?i)\bdiamonds?\b", "", amount)
             amount = amount.replace(" ", "").strip() or "unknown"
 
-        # Active variant ကို ရွေး
         variants = product.get("variants", [])
         active_variants = [v for v in variants if v.get("status") == "active"]
         if not active_variants:
@@ -737,7 +729,6 @@ def server_keyboard():
 
 
 def get_unique_products(server):
-    """Product list ကို amount အလိုက် unique ဖြစ်အောင် filter လုပ်ပါ"""
     products = PRODUCT_CACHE.get(server, [])
     seen_amounts = set()
     unique_products = []
@@ -1389,7 +1380,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("amount:"):
-        parts = returnplit(":")
+        parts = data.split(":")
         if len(parts) != 3:
             return
         server = parts[1]
@@ -1688,14 +1679,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return
 
-        await update.message.reply_text("❓ Menu ကနေရွေးပေးပါ။", reply_markup=main_keyboard())
+    await update.message.reply_text("❓ Menu ကနေရွေးပေးပါ။", reply_markup=main_keyboard())
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await request_access(update, context):
         return
-
-    
     text = (
         "📖 <b>Help</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -1859,6 +1848,7 @@ async def check_subscription_command(update: Update, context: ContextTypes.DEFAU
         parse_mode="HTML",
     )
 
+
 async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -1963,6 +1953,7 @@ async def post_init(application: Application):
 async def post_shutdown(application: Application):
     print("🛑 Bot shutting down...")
 
+
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN မတွေ့ပါ။ Railway Variables မှာ BOT_TOKEN ထည့်ပါ။")
@@ -2026,3 +2017,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+        
+
