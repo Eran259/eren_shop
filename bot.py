@@ -572,11 +572,8 @@ def clean_text(value):
 
 def normalize_product_name(name):
     name = clean_text(name)
-    # "Diamonds" ကို ဖျက်ပါ
     name = re.sub(r"(?i)\bdiamonds?\b", "", name)
     name = name.replace(" ", "")
-    
-    # "78+8" ပုံစံ
     match = re.search(r"(\d+(?:\.\d+)?)\+(\d+(?:\.\d+)?)", name)
     if match:
         a, b = match.group(1), match.group(2)
@@ -587,8 +584,6 @@ def normalize_product_name(name):
             except Exception:
                 return x
         return f"{fmt(a)}+{fmt(b)}"
-    
-    # "355" ပုံစံ
     match = re.search(r"(\d+(?:\.\d+)?)", name)
     if match:
         value = match.group(1)
@@ -598,8 +593,6 @@ def normalize_product_name(name):
         except Exception:
             pass
         return value
-    
-    # "WeeklyPass", "BPCard" စတဲ့ Name တွေကို မဖျက်ပါ
     return name
 
 def format_amount_for_display(amount):
@@ -624,18 +617,13 @@ def diamond_sort_key(product):
     return 999999999
 
 def _dedupe_products(products):
-    """
-    Server Code အလိုက် ခွဲပြီး ဈေးအသက်သာဆုံးကို ယူပါ။
-    """
     unique = {}
     for product in products:
         amount = product.get("amount")
         if not amount:
             continue
-        # Server Code ကို Key ထဲ ထည့်ပါ
         server_code = product.get("server_code", "")
         key = f"{amount}|{server_code}"
-        
         old = unique.get(key)
         if old is None:
             unique[key] = product
@@ -699,7 +687,7 @@ def load_server_products(server):
                 products.append(item)
 
     print(f"✅ Filtered {len(products)} MLBB products for {server}")
-return sorted(products, key=diamond_sort_key), name
+    return sorted(products, key=diamond_sort_key), None
 
 def refresh_products(server=None, force=False):
     global PRODUCT_CACHE, LAST_PRODUCTS_LOAD
@@ -846,7 +834,6 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=15):
     if row:
         buttons.append(row)
 
-    # Pagination Buttons
     nav_row = []
     if page > 0:
         nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"page:{server}:{page-1}"))
@@ -1444,7 +1431,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode="HTML")
         return
 
-
 async def handle_callback_actions(update, context):
     query = update.callback_query
     data = query.data or ""
@@ -1463,7 +1449,6 @@ async def handle_callback_actions(update, context):
         return True
 
     return False
-
 
 async def handle_deposit_callback(update, context):
     query = update.callback_query
@@ -1508,7 +1493,6 @@ async def handle_deposit_callback(update, context):
             print("REJECT DM ERROR:", e)
         await query.answer("Rejected ❌")
         return
-
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1839,7 +1823,6 @@ async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
     )
 
-
 async def delete_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -1862,11 +1845,7 @@ async def delete_price_command(update: Update, context: ContextTypes.DEFAULT_TYP
         f"💎 Amount: <b>{amount}</b>",
         parse_mode="HTML",
     )
-    
-    
-# =========================================================
-# PRICE COMMANDS (Admin)
-# =========================================================
+
 async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -1889,7 +1868,6 @@ async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
-
 # =========================================================
 # ERROR HANDLER
 # =========================================================
@@ -1901,17 +1879,14 @@ async def error_handler(update, context):
         print("⚠️ Conflict Error: Bot Token ကို နေရာနှစ်ခုမှာ Run နေပါတယ်။")
         print("⚠️ Bot Token ကို Revoke လုပ်ပြီး အသစ်ယူပါ။")
 
-
 # =========================================================
 # POST INIT / SHUTDOWN
 # =========================================================
 async def post_init(application: Application):
     print("✅ Bot initialized successfully!")
 
-
 async def post_shutdown(application: Application):
     print("🛑 Bot shutting down...")
-
 
 # =========================================================
 # MAIN
