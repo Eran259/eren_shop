@@ -43,11 +43,12 @@ LICENSE_SECRET = "EREN_SHOP_SECRET_2026"
 # =========================================================
 # PRICE CALCULATOR
 # =========================================================
-MMK_RATE = 0.2542 * 1.20
-USD_TO_MMK = 4500
-PROFIT_MARGIN = 1.20
+MMK_RATE = 0.2542 * 1.20  # 1 MC = ? MMK (20% အမြတ်)
+USD_TO_MMK = 4500           # 1 USDT = ? MMK
+PROFIT_MARGIN = 1.20        # 20% အမြတ်
+USD_TO_MC = 17700           # 1 USD = 17,700 MC
 
-MC_ALERT_THRESHOLD = 100
+MC_ALERT_THRESHOLD = 100    # MC Balance သတိပေးမည့် ပမာဏ
 
 # =========================================================
 # BOT ACCESS CONTROL
@@ -714,7 +715,7 @@ def server_keyboard():
         ]
     )
 
-def amount_keyboard(server):
+def amount_keyboard(server, is_admin=False):
     products = PRODUCT_CACHE.get(server, [])
     buttons = []
     row = []
@@ -730,11 +731,28 @@ def amount_keyboard(server):
 
     for index, product in enumerate(unique_products):
         amount = product.get("amount", "?")
-        button = InlineKeyboardButton(f"💎 {amount}", callback_data=f"amount:{server}:{index}")
+
+        if is_admin:
+            # Admin ဆိုရင် MC ရော $ ရော ပြပါ
+            mc_price = product.get("price", 0)
+            try:
+                mc_price = float(mc_price)
+                usd_price = mc_price / USD_TO_MC
+                price_text = f"{mc_price:.2f} MC (${usd_price:.3f})"
+            except Exception:
+                price_text = "N/A"
+        else:
+            # User ဆိုရင် MMK ဈေး ပြပါ
+            mmk_price = get_mmk_price(server, amount, product)
+            price_text = format_mmk(mmk_price)
+
+        button_text = f"💎 {amount} • {price_text}"
+        button = InlineKeyboardButton(button_text, callback_data=f"amount:{server}:{index}")
         row.append(button)
-        if len(row) == 2:
+        if len(row) == 1:
             buttons.append(row)
             row = []
+
     if row:
         buttons.append(row)
     buttons.append([InlineKeyboardButton("⬅️ Server ပြန်ရွေးမယ်", callback_data="back:servers")])
@@ -1195,19 +1213,35 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        lines = [
-            f"💎 <b>{html.escape(server)} Server</b>",
-            "━━━━━━━━━━━━━━━━━━━━",
-            "",
-            f"📦 {len(products)} Packages Available",
-            "",
-            "👇 အောက်က Button ကနေ Amount ရွေးပါ။",
-        ]
+        is_admin = (query.from_user.id == ADMIN_ID)
+
+        if is_admin:
+            lines = [
+                f"💎 <b>{html.escape(server)} Server</b> (Admin View)",
+                "━━━━━━━━━━━━━━━━━━━━",
+                "",
+                f"📦 {len(products)} Packages Available",
+                "",
+                "💡 <b>Format:</b> Amount • MC ($)",
+                "",
+                "👇 အောက်က Button ကနေ Amount ရွေးပါ။",
+            ]
+        else:
+            lines = [
+                f"💎 <b>{html.escape(server)} Server</b>",
+                "━━━━━━━━━━━━━━━━━━━━",
+                "",
+                f"📦 {len(products)} Packages Available",
+                "",
+                "💡 <b>Format:</b> Amount • MMK",
+                "",
+                "👇 အောက်က Button ကနေ Amount ရွေးပါ။",
+            ]
 
         await query.edit_message_text(
             "\n".join(lines),
             parse_mode="HTML",
-            reply_markup=amount_keyboard(server),
+            reply_markup=amount_keyboard(server, is_admin=is_admin),
         )
         return
 
@@ -1238,16 +1272,42 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = query.from_user.id
         user_balance = get_user_balance(user_id)
 
-        text = (
-            "💎 <b>Selected Product</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🌍 Server: <b>{html.escape(server)}</b>\n"
-            f"💎 Amount: <b>{html.escape(str(amount))}</b>\n"
-            f"💰 Price: <b>{html.escape(price_text)}</b>\n\n"
-            f"💵 သင့် Balance: <b>{user_balance:,} MMK</b>\n\n"
-            "🆔 <b>Player ID</b> ထည့်ပါ။\n"
-            "ဥပမာ: <code>12345678</code>"
-        )
+        if user_id == ADMIN_ID:
+            mc_price = product.get("price", 0)
+            try:
+                mc_price = float(mc_price)
+                usd_price = mc_price / USD_TO_MC
+                mc_text = f"{mc_price:.3f} MC"
+                usd_text = f"${usd_price:.3f}"
+            except Exception:
+                mc_text = "N/A"
+                usd_text = "N/A"
+
+            text = (
+                "💎 <b>Selected Product</b> (Admin View)\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"🌍 Server: <b>{html.escape(server)}</b>\n"
+                f"💎 Amount: <b>{html.escape(str(amount))}</b>\n"
+                f"💰 MMK Price: <b>{html.escape(price_text)}</b>\n"
+                f"🪙 MC Price: <b>{html.escape(mc_text)}</b>\n"
+                f"💵 USD Price: <b>{html.escape(usd_text)}</b>\n"
+                f"🔖 SKU: <code>{html.escape(sku)}</code>\n\n"
+                f"💵 သင့် Balance: <b>{user_balance:,} MMK</b>\n\n"
+                "🆔 <b>Player ID</b> ထည့်ပါ။\n"
+                "ဥပမာ: <code>12345678</code>"
+            )
+        else:
+            text = (
+                "💎 <b>Selected Product</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"🌍 Server: <b>{html.escape(server)}</b>\n"
+                f"💎 Amount: <b>{html.escape(str(amount))}</b>\n"
+                f"💰 Price: <b>{html.escape(price_text)}</b>\n\n"
+                f"💵 သင့် Balance: <b>{user_balance:,} MMK</b>\n\n"
+                "🆔 <b>Player ID</b> ထည့်ပါ။\n"
+                "ဥပမာ: <code>12345678</code>"
+            )
+
         context.user_data["state"] = "order_player_id"
         await query.edit_message_text(text, parse_mode="HTML")
         return
@@ -1667,7 +1727,4 @@ def main():
     app.add_error_handler(error_handler)
 
     print("✅ Bot is running!")
-    app.run_polling(drop_pending_updates=True)
-
-if __name__ == "__main__":
-    main()
+  
