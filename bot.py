@@ -47,6 +47,8 @@ MMK_RATE = 0.2542 * 1.20
 USD_TO_MMK = 4500
 PROFIT_MARGIN = 1.20
 USD_TO_MC = 17700
+USD_TO_IDR = 17000          # 1 USD = 17,000 IDR
+IDR_MICRO = 1000000         # IDR micro-units
 
 MC_ALERT_THRESHOLD = 100
 
@@ -531,6 +533,18 @@ def normalize_product_name(name):
         return value
     return name
 
+def format_amount_for_display(amount):
+    """1.045 -> 1,045"""
+    try:
+        if "." in str(amount):
+            f = float(amount)
+            if f.is_integer():
+                return f"{int(f):,}"
+            return f"{f:,}"
+        return f"{int(amount):,}"
+    except Exception:
+        return str(amount)
+
 def diamond_sort_key(product):
     amount = product.get("amount", "")
     match = re.search(r"(\d+(?:\.\d+)?)", str(amount))
@@ -561,13 +575,10 @@ def _dedupe_products(products):
     return sorted(unique.values(), key=diamond_sort_key)
 
 # =========================================================
-# LOAD PRODUCTS FROM API (format=legacy)
+# LOAD PRODUCTS FROM API
 # =========================================================
 def load_server_products(server):
-    params = {
-        "limit": 1000,
-        "format": "legacy"  # <--- Legacy Format (price = USD)
-    }
+    params = {"limit": 1000}
     data, error = api_get("/api/v1/h2h/pricelists", params=params)
     if error:
         PRODUCT_LAST_ERROR[server] = error
@@ -642,10 +653,9 @@ def ensure_server_products(server):
     return products, PRODUCT_LAST_ERROR.get(server) if not products else None
 
 # =========================================================
-# PRICE CALCULATOR (USD -> MMK)
+# PRICE CALCULATOR (IDR micro -> IDR -> USD -> MMK)
 # =========================================================
 def get_mmk_price(server, amount, product=None):
-    # Manual Price ရှိရင် အဲ့ဒါကို ယူပါ
     price = MMK_PRICES.get(server, {}).get(amount)
     if price is not None:
         try:
@@ -653,20 +663,33 @@ def get_mmk_price(server, amount, product=None):
         except Exception:
             return price
 
-    # မရှိရင် API ရဲ့ USD ဈေးကို MMK ပြောင်းပါ
     if product:
-        usd_price = product.get("price")  # <--- Legacy Format မှာ USD
-        if usd_price is not None:
+        raw_price = product.get("price")
+        if raw_price is not None:
             try:
-                # USD * USD_TO_MMK * PROFIT_MARGIN = MMK
-                price = float(usd_price) * USD_TO_MMK * PROFIT_MARGIN
-                if price < 100:
-                    price = 100
-                price = round(price / 100) * 100
-                return int(price)
+                raw_price = float(raw_price)
+                # IDR micro-units -> IDR
+                idr_price = raw_price / IDR_MICRO
+                # IDR -> USD
+                usd_price = idr_price / USD_TO_IDR
+                # USD -> MMK
+                mmk_price = usd_price * USD_TO_MMK * PROFIT_MARGIN
+                if mmk_price < 100:
+                    mmk_price = 100
+                mmk_price = round(mmk_price / 100) * 100
+                return int(mmk_price)
             except Exception:
                 pass
     return None
+
+def get_usd_price(product):
+    """IDR micro -> USD"""
+    try:
+        raw_price = float(product.get("price", 0))
+        idr_price = raw_price / IDR_MICRO
+        return idr_price / USD_TO_IDR
+    except Exception:
+        return 0.0
 
 def format_mmk(price):
     if price is None:
@@ -738,22 +761,17 @@ def amount_keyboard(server, is_admin=False):
 
     for index, product in enumerate(unique_products):
         amount = product.get("amount", "?")
+        display_amount = format_amount_for_display(amount)
 
         if is_admin:
-            # Admin ဆိုရင် USD ရော MC ရော ပြပါ
-            usd_price = product.get("price", 0)
-            try:
-                usd_price = float(usd_price)
-                mc_price = usd_price * USD_TO_MC
-                price_text = f"${usd_price:.3f} ({mc_price:.2f} MC)"
-            except Exception:
-                price_text = "N/A"
+            usd_price = get_usd_price(product)
+            mc_price = usd_price * USD_TO_MC
+            price_text = f"${usd_price:.3f} ({mc_price:.2f} MC)"
         else:
-            # User ဆိုရင် MMK ဈေး ပြပါ
             mmk_price = get_mmk_price(server, amount, product)
             price_text = format_mmk(mmk_price)
 
-        button_text = f"💎 {amount} • {price_text}"
+        button_text = f"💎 {display_amount} • {price_text}"
         button = InlineKeyboardButton(button_text, callback_data=f"amount:{server}:{index}")
         row.append(button)
         if len(row) == 1:
@@ -1040,13 +1058,14 @@ async def process_order_zone_id(update: Update, context: ContextTypes.DEFAULT_TY
     server = context.user_data.get("server", "Global")
     product = context.user_data.get("product", {})
     amount = product.get("amount", "?")
+    display_amount = format_amount_for_display(amount)
     price = get_mmk_price(server, amount, product)
     price_text = format_mmk(price)
 
     user_id = update.effective_user.id
     user_balance = get_user_balance(user_id)
     balance_warning = ""
-    if user_balance < price:
+    if price and user_balance < price:
         balance_warning = (
             f"\n⚠️ <b>Balance မလုံလောက်ပါ။</b>\n"
             f"💵 လက်ရှိ: <b>{user_balance:,} MMK</b>\n"
@@ -1061,7 +1080,7 @@ async def process_order_zone_id(update: Update, context: ContextTypes.DEFAULT_TY
         f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🌍 Server: <b>{html.escape(server)}</b>\n"
-        f"💎 Diamond: <b>{html.escape(str(amount))}</b>\n"
+        f"💎 Diamond: <b>{html.escape(display_amount)}</b>\n"
         f"💰 Price: <b>{html.escape(price_text)}</b>\n\n"
         f"💵 သင့် Balance: <b>{user_balance:,} MMK</b>\n"
         f"{balance_warning}\n"
@@ -1103,6 +1122,7 @@ async def confirm_order(query, context):
         return
 
     amount = product.get("amount", "?")
+    display_amount = format_amount_for_display(amount)
     price = get_mmk_price(server, amount, product)
 
     if price is None:
@@ -1146,7 +1166,7 @@ async def confirm_order(query, context):
         f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
         f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
         f"🌍 Server: <b>{html.escape(str(server))}</b>\n"
-        f"💎 Diamond: <b>{html.escape(str(amount))}</b>\n"
+        f"💎 Diamond: <b>{html.escape(display_amount)}</b>\n"
         f"💰 Price: <b>{format_mmk(price)}</b>\n\n"
         f"🆔 Transaction: <code>{html.escape(str(transaction_id))}</code>\n"
         f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n\n"
@@ -1265,6 +1285,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["server"] = server
         context.user_data["product"] = product
         amount = product.get("amount", "?")
+        display_amount = format_amount_for_display(amount)
         price = get_mmk_price(server, amount, product)
         sku = product.get("sku_code", "")
         context.user_data["sku"] = sku
@@ -1274,21 +1295,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_balance = get_user_balance(user_id)
 
         if user_id == ADMIN_ID:
-            usd_price = product.get("price", 0)
-            try:
-                usd_price = float(usd_price)
-                mc_price = usd_price * USD_TO_MC
-                usd_text = f"${usd_price:.3f}"
-                mc_text = f"{mc_price:.3f} MC"
-            except Exception:
-                usd_text = "N/A"
-                mc_text = "N/A"
+            usd_price = get_usd_price(product)
+            mc_price = usd_price * USD_TO_MC
+            usd_text = f"${usd_price:.3f}"
+            mc_text = f"{mc_price:.3f} MC"
 
             text = (
                 "💎 <b>Selected Product</b> (Admin View)\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"🌍 Server: <b>{html.escape(server)}</b>\n"
-                f"💎 Amount: <b>{html.escape(str(amount))}</b>\n"
+                f"💎 Amount: <b>{html.escape(display_amount)}</b>\n"
                 f"💰 MMK Price: <b>{html.escape(price_text)}</b>\n"
                 f"🪙 MC Price: <b>{html.escape(mc_text)}</b>\n"
                 f"💵 USD Price: <b>{html.escape(usd_text)}</b>\n"
@@ -1302,7 +1318,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "💎 <b>Selected Product</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"🌍 Server: <b>{html.escape(server)}</b>\n"
-                f"💎 Amount: <b>{html.escape(str(amount))}</b>\n"
+                f"💎 Amount: <b>{html.escape(display_amount)}</b>\n"
                 f"💰 Price: <b>{html.escape(price_text)}</b>\n\n"
                 f"💵 သင့် Balance: <b>{user_balance:,} MMK</b>\n\n"
                 "🆔 <b>Player ID</b> ထည့်ပါ။\n"
