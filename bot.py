@@ -269,7 +269,6 @@ async def request_access(update, context, force_request=False):
 
     status = get_access_status(user.id)
 
-    # Status မရှိသေးရင် (သို့) force_request ဖြစ်ရင် Request ပို့ပါ
     if status is None or (force_request and status in ("pending", "rejected")):
         save_access_request(user.id, user.username, user.first_name)
         username = f"@{user.username}" if user.username else "—"
@@ -773,7 +772,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     first_name = user.first_name or "User"
     balance = get_user_balance(user_id)
 
-    # Admin ဆိုရင် တိုက်ရိုက် Welcome ပြ
     if user_id == ADMIN_ID:
         text = (
             f"✨ <b>Welcome, {html.escape(first_name)}!</b> ✨\n"
@@ -791,12 +789,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
         return
 
-    # Access Status စစ်ပါ
     status = get_access_status(user_id)
     sub_active = is_subscription_active(user_id)
     sub = get_subscription(user_id)
 
-    # Status Text သတ်မှတ်ပါ
     if status == "approved" and sub_active:
         status_text = "✅ <b>Active</b>"
         expiry_text = f"📅 Expiry: <b>{sub['expiry_date']}</b>"
@@ -831,7 +827,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         footer = "/start နှိပ်ပြီး Request ပြန်ပို့နိုင်ပါတယ်။"
         show_keyboard = False
     else:
-        # Status မရှိသေးရင် Request ပို့ပါ
         await request_access(update, context, force_request=True)
 
         status_text = "⏳ <b>Pending Approval</b>"
@@ -839,7 +834,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         footer = "Approve ဖြစ်တဲ့အခါ Bot ကို သုံးလို့ရပါမယ်။"
         show_keyboard = False
 
-    # Welcome Message ပြပါ
     text = (
         f"✨ <b>Welcome, {html.escape(first_name)}!</b> ✨\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -1536,9 +1530,15 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"✅ <b>Balance ဖြည့်ပြီးပါပြီ။</b>\n\n"
                 f"💰 ဖြည့်ငွေ: <b>{amount:,} MMK</b>\n"
                 f"💵 လက်ကျန်: <b>{new_balance:,} MMK</b>\n\n"
-                "အခု Diamond ဝယ်လို့ရပါပြီ။"
+                "🛒 <b>Service များ</b>\n"
+                "💎 MLBB Diamonds\n"
+                "🔍 Check ML ID\n"
+                "💰 My Balance\n"
+                "💳 Deposit\n\n"
+                "👇 အောက်က Button ကနေ ရွေးပါ။"
             ),
             parse_mode="HTML",
+            reply_markup=main_keyboard(),
         )
     except Exception as e:
         print("BALANCE NOTIFY ERROR:", e)
@@ -1595,9 +1595,15 @@ async def add_subscription_command(update: Update, context: ContextTypes.DEFAULT
             text=(
                 f"✅ <b>Bot အသုံးပြုခွင့် ရပါပြီ။</b>\n\n"
                 f"📅 သက်တမ်းကုန်ဆုံးရက်: <b>{expiry}</b>\n\n"
-                "အခု Bot ကို အသုံးပြုနိုင်ပါပြီ။"
+                "🛒 <b>Service များ</b>\n"
+                "💎 MLBB Diamonds\n"
+                "🔍 Check ML ID\n"
+                "💰 My Balance\n"
+                "💳 Deposit\n\n"
+                "👇 အောက်က Button ကနေ ရွေးပါ။"
             ),
             parse_mode="HTML",
+            reply_markup=main_keyboard(),
         )
     except Exception as e:
         print("SUB NOTIFY ERROR:", e)
