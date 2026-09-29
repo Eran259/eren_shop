@@ -1389,7 +1389,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("amount:"):
-        parts = data.split(":")
+        parts = returnplit(":")
         if len(parts) != 3:
             return
         server = parts[1]
@@ -1688,11 +1688,14 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.clear()
         return
 
-    await update.message.reply_text("❓ Menu ကနေရွေးပေးပါ။", reply_markup=main_keyboard())
+        await update.message.reply_text("❓ Menu ကနေရွေးပေးပါ။", reply_markup=main_keyboard())
 
-    async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await request_access(update, context):
         return
+
+    
     text = (
         "📖 <b>Help</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
