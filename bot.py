@@ -1089,7 +1089,7 @@ async def confirm_order(query, context):
     user_id = query.from_user.id
 
     if not product or not player_id or not zone_id:
-        await query.edit_message_text("❌ Order information မပြည့်စုံပါ။\n/start နဲ့ ပြန်စပါ။")
+        await query.edreturnsage_text("❌ Order information မပြည့်စုံပါ။\n/start နဲ့ ပြန်စပါ။")
         context.user_data.clear()
         return
 
@@ -1326,47 +1326,57 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("amount:"):
-        parts = data.split(":")
-        if len(parts) != 3:
-            return
-        server = parts[1]
-        try:
-            index = int(parts[2])
-        except Exception:
-            return
-
-        products = PRODUCT_CACHE.get(server, [])
-        if index < 0 or index >= len(products):
-            await query.answer("❌ Product မတွေ့ပါ။", show_alert=True)
-            return
-
-        product = products[index]
-        context.user_data["server"] = server
-        context.user_data["product"] = product
-        amount = product.get("amount", "?")
-        display_amount = format_amount_for_display(amount)
-        mc_price = get_mc_price(server, amount, product)
-        sku = product.get("sku_code", "")
-        context.user_data["sku"] = sku
-        price_text = format_mc(mc_price)
-
-        user_id = query.from_user.id
-        user_balance = get_user_balance(user_id)
-
-        text = (
-            "💎 <b>Selected Product</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🌍 Server: <b>{html.escape(server)}</b>\n"
-            f"💎 Amount: <b>{html.escape(display_amount)}</b>\n"
-            f"🪙 MC Price: <b>{html.escape(price_text)}</b>\n\n"
-            f"🪙 သင့် Balance: <b>{user_balance:.3f} MC</b>\n\n"
-            "🆔 <b>Player ID</b> ထည့်ပါ။\n"
-            "ဥပမာ: <code>12345678</code>"
-        )
-
-        context.user_data["state"] = "order_player_id"
-        await query.edit_message_text(text, parse_mode="HTML")
+    parts = data.split(":")
+    if len(parts) != 3:
         return
+    server = parts[1]
+    try:
+        index = int(parts[2])
+    except Exception:
+        return
+
+    # amount_keyboard မှာ filter လုပ်ပြီးသား list ကို ပြန်ဖန်တီးပါ
+    products_raw = PRODUCT_CACHE.get(server, [])
+    seen_amounts = set()
+    products = []
+    for p in products_raw:
+        amt = p.get("amount", "?")
+        if amt in seen_amounts:
+            continue
+        seen_amounts.add(amt)
+        products.append(p)
+
+    if index < 0 or index >= len(products):
+        await query.answer("❌ Product မတွေ့ပါ။", show_alert=True)
+        return
+
+    product = products[index]
+    context.user_data["server"] = server
+    context.user_data["product"] = product
+    amount = product.get("amount", "?")
+    display_amount = format_amount_for_display(amount)
+    mc_price = get_mc_price(server, amount, product)
+    sku = product.get("sku_code", "")
+    context.user_data["sku"] = sku
+    price_text = format_mc(mc_price)
+
+    user_id = query.from_user.id
+    user_balance = get_user_balance(user_id)
+
+    text = (
+        "💎 <b>Selected Product</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🌍 Server: <b>{html.escape(server)}</b>\n"
+        f"💎 Amount: <b>{html.escape(display_amount)}</b>\n"
+        f"🪙 MC Price: <b>{html.escape(price_text)}</b>\n\n"
+        f"🪙 သင့် Balance: <b>{user_balance:.3f} MC</b>\n\n"
+        "🆔 <b>Player ID</b> ထည့်ပါ။\n"
+        "ဥပမာ: <code>12345678</code>"
+    )
+
+    context.user_data["state"] = "order_player_id"
+    await query.edit_message_text(text, parse_mode="HTML")
+    return
 
 async def handle_callback_actions(update, context):
     query = update.callback_query
