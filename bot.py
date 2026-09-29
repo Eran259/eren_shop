@@ -1489,7 +1489,8 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print("DEPOSIT SEND ERROR:", e)
 
-        async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
     if not await request_access(update, context):
@@ -1867,13 +1868,16 @@ async def error_handler(update, context):
 
     if "Conflict" in str(error):
         print("⚠️ Conflict Error: Bot Token ကို နေရာနှစ်ခုမှာ Run နေပါတယ်။")
-        print("⚠️ Bot Token ကို Revoke လုပ်ပြီး အသစ်ယူပါ။")
+        print("⚠️ Bot Token ကို Revoke လုပ်ပြီး အသစ်ယူပါ。")
+
 
 async def post_init(application: Application):
     print("✅ Bot initialized successfully!")
 
+
 async def post_shutdown(application: Application):
     print("🛑 Bot shutting down...")
+
 
 def main():
     if not BOT_TOKEN:
