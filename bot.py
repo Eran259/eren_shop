@@ -51,9 +51,6 @@ MC_ALERT_THRESHOLD = 100
 
 ADMIN_ID = 5698123475
 
-# =========================================================
-# ACCESS DATABASE
-# =========================================================
 ACCESS_DB = "access.db"
 
 def init_access_db():
@@ -102,9 +99,6 @@ def access_request_keyboard(user_id):
         InlineKeyboardButton("❌ Reject", callback_data=f"access:reject:{user_id}"),
     ]])
 
-# =========================================================
-# USER BALANCE DATABASE
-# =========================================================
 USER_BALANCE_DB = "user_balance.db"
 
 def init_balance_db():
@@ -666,8 +660,8 @@ def load_server_products(server):
         product_server = None
         if "global" in brand_text:
             product_server = "Global"
-        elif "indonesia" in brand_text or "(id)" in brand_text:
-            product_server = "Indonesia"
+        elif "mobile legends (id)" in brand_text or "indonesia" in brand_text or "(id)" in brand_text:
+            product_server = "Global"
         elif "malaysia" in brand_text or "(my)" in brand_text:
             product_server = "Malaysia"
         elif "singapore" in brand_text or "(sg)" in brand_text:
@@ -768,7 +762,8 @@ def main_keyboard():
         [
             ["💎 MLBB Diamonds", "🔍 Check ML ID"],
             ["💰 My Balance", "💳 Deposit"],
-            ["📊 Admin Panel", "🔌 API Status"],
+            ["📞 Contact Admin", "📊 Admin Panel"],
+            ["🔌 API Status"],
         ],
         resize_keyboard=True,
     )
@@ -777,7 +772,6 @@ def server_keyboard():
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("🌍 Global Server", callback_data="server:Global")],
-            [InlineKeyboardButton("🇮🇩 Indonesia Server", callback_data="server:Indonesia")],
             [InlineKeyboardButton("🇲🇾 Malaysia Server", callback_data="server:Malaysia")],
             [InlineKeyboardButton("🇸🇬 Singapore Server", callback_data="server:Singapore")],
             [InlineKeyboardButton("🇹🇷 Turkey Server", callback_data="server:Turkey")],
@@ -845,9 +839,6 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=15):
     buttons.append([InlineKeyboardButton("⬅️ Server ပြန်ရွေးမယ်", callback_data="back:servers")])
     return InlineKeyboardMarkup(buttons)
 
-# =========================================================
-# START & BASIC MENUS
-# =========================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
@@ -867,7 +858,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💎 MLBB Diamonds\n"
             "🔍 Check ML ID\n"
             "💰 My Balance\n"
-            "💳 Deposit\n\n"
+            "💳 Deposit\n"
+            "📞 Contact Admin\n\n"
             "⚡ Powered by Eren"
         )
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
@@ -882,7 +874,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💎 MLBB Diamonds\n"
             "🔍 Check ML ID\n"
             "💰 My Balance\n"
-            "💳 Deposit"
+            "💳 Deposit\n"
+            "📞 Contact Admin"
         )
         show_keyboard = True
     elif status == "pending":
@@ -1036,9 +1029,6 @@ async def show_api_status(update: Update):
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
-# =========================================================
-# CHECK ID FLOW
-# =========================================================
 async def start_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["state"] = "check_id_player"
@@ -1091,9 +1081,6 @@ async def process_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text(text, parse_mode="HTML")
 
-# =========================================================
-# ORDER FLOW
-# =========================================================
 async def process_order_player_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player_id = update.message.text.strip()
     if not player_id.isdigit():
@@ -1244,9 +1231,6 @@ async def confirm_order(query, context):
     await query.edit_message_text(text, parse_mode="HTML")
     context.user_data.clear()
 
-# =========================================================
-# CALLBACK HANDLERS
-# =========================================================
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
@@ -1261,6 +1245,31 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🌍 Server ရွေးပါ။",
             parse_mode="HTML",
             reply_markup=server_keyboard(),
+        )
+        return
+
+    if data.startswith("reply:"):
+        if query.from_user.id != ADMIN_ID:
+            await query.answer("❌ Admin only", show_alert=True)
+            return
+
+        try:
+            user_id = int(data.split(":")[1])
+        except Exception:
+            return
+
+        context.user_data["reply_to"] = user_id
+        context.user_data["state"] = "admin_reply"
+
+        await query.answer("Reply ရိုက်ပါ", show_alert=True)
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                f"↩️ <b>Reply to User</b> <code>{user_id}</code>\n\n"
+                "Reply စာကို ရိုက်ထည့်ပါ။\n\n"
+                "❌ Cancel လုပ်ချင်ရင် /start"
+            ),
+            parse_mode="HTML",
         )
         return
 
@@ -1519,9 +1528,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await callback_handler(update, context)
 
-# =========================================================
-# PHOTO HANDLER (Deposit Screenshot)
-# =========================================================
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.photo:
         return
@@ -1555,9 +1561,6 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print("DEPOSIT SEND ERROR:", e)
 
-# =========================================================
-# TEXT HANDLER
-# =========================================================
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -1577,6 +1580,16 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if text == "💳 Deposit":
         await show_deposit_menu(update, context)
+        return
+    if text == "📞 Contact Admin":
+        context.user_data["state"] = "contact_admin"
+        await update.message.reply_text(
+            "📞 <b>Contact Admin</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Admin ဆီ ပို့ချင်တဲ့ စာကို ရိုက်ထည့်ပါ။\n\n"
+            "❌ Cancel လုပ်ချင်ရင် /start",
+            parse_mode="HTML",
+        )
         return
     if text == "📊 Admin Panel":
         await show_admin_panel(update, context)
@@ -1611,11 +1624,73 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await process_order_zone_id(update, context)
         return
 
+    if state == "contact_admin":
+        user_id = update.effective_user.id
+        user_name = update.effective_user.first_name or "User"
+        username = f"@{update.effective_user.username}" if update.effective_user.username else "—"
+
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    "📞 <b>NEW USER MESSAGE</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"👤 Name: <b>{html.escape(user_name)}</b>\n"
+                    f"🔗 Username: <b>{html.escape(username)}</b>\n"
+                    f"🆔 User ID: <code>{user_id}</code>\n\n"
+                    f"💬 <b>Message:</b>\n"
+                    f"{html.escape(text)}"
+                ),
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("↩️ Reply", callback_data=f"reply:{user_id}"),
+                ]]),
+            )
+            await update.message.reply_text(
+                "✅ <b>Message ပို့ပြီးပါပြီ။</b>\n\n"
+                "Admin က ပြန်ဖြေပါမယ်။",
+                parse_mode="HTML",
+                reply_markup=main_keyboard(),
+            )
+        except Exception as e:
+            print("CONTACT SEND ERROR:", e)
+            await update.message.reply_text("❌ Message ပို့လို့မရပါ။ နောက်မှ ပြန်စမ်းပါ။")
+
+        context.user_data.clear()
+        return
+
+    if state == "admin_reply":
+        if update.effective_user.id != ADMIN_ID:
+            return
+
+        reply_to = context.user_data.get("reply_to")
+        if not reply_to:
+            return
+
+        try:
+            await context.bot.send_message(
+                chat_id=reply_to,
+                text=(
+                    "📩 <b>Admin Reply</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"{html.escape(text)}"
+                ),
+                parse_mode="HTML",
+                reply_markup=main_keyboard(),
+            )
+            await update.message.reply_text(
+                "✅ <b>Reply ပို့ပြီးပါပြီ။</b>",
+                reply_markup=main_keyboard(),
+            )
+        except Exception as e:
+            print("REPLY SEND ERROR:", e)
+            await update.message.reply_text("❌ Reply ပို့လို့မရပါ။")
+
+        context.user_data.clear()
+        return
+
     await update.message.reply_text("❓ Menu ကနေရွေးပေးပါ။", reply_markup=main_keyboard())
 
-# =========================================================
-# COMMANDS
-# =========================================================
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await request_access(update, context):
         return
@@ -1626,6 +1701,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔍 Check ML ID — Nickname စစ်ရန်\n"
         "💰 My Balance — User Balance\n"
         "💳 Deposit — ငွေဖြည့်ရန်\n"
+        "📞 Contact Admin — Admin ဆီ စာပို့ရန်\n"
         "📊 Admin Panel — Admin Commands\n\n"
         "/start — Main Menu"
     )
@@ -1671,7 +1747,8 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "💎 MLBB Diamonds\n"
                 "🔍 Check ML ID\n"
                 "💰 My Balance\n"
-                "💳 Deposit\n\n"
+                "💳 Deposit\n"
+                "📞 Contact Admin\n\n"
                 "👇 အောက်က Button ကနေ ရွေးပါ။"
             ),
             parse_mode="HTML",
@@ -1736,7 +1813,8 @@ async def add_subscription_command(update: Update, context: ContextTypes.DEFAULT
                 "💎 MLBB Diamonds\n"
                 "🔍 Check ML ID\n"
                 "💰 My Balance\n"
-                "💳 Deposit\n\n"
+                "💳 Deposit\n"
+                "📞 Contact Admin\n\n"
                 "👇 အောက်က Button ကနေ ရွေးပါ။"
             ),
             parse_mode="HTML",
@@ -1772,9 +1850,6 @@ async def check_subscription_command(update: Update, context: ContextTypes.DEFAU
         parse_mode="HTML",
     )
 
-# =========================================================
-# PRICE COMMANDS (Admin)
-# =========================================================
 async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -1798,7 +1873,7 @@ async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ MC နဲ့ USD က နံပါတ် ဖြစ်ရပါမယ်။")
         return
 
-    valid_servers = ["Global", "Indonesia", "Malaysia", "Singapore", "Turkey", "Philippines", "Brazil"]
+    valid_servers = ["Global", "Malaysia", "Singapore", "Turkey", "Philippines", "Brazil"]
     if server not in valid_servers:
         await update.message.reply_text(f"❌ Server မှားနေတယ်။ ရွေးနိုင်တာ: {', '.join(valid_servers)}")
         return
@@ -1868,9 +1943,6 @@ async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
-# =========================================================
-# ERROR HANDLER
-# =========================================================
 async def error_handler(update, context):
     error = context.error
     print("BOT ERROR:", error)
@@ -1879,18 +1951,12 @@ async def error_handler(update, context):
         print("⚠️ Conflict Error: Bot Token ကို နေရာနှစ်ခုမှာ Run နေပါတယ်။")
         print("⚠️ Bot Token ကို Revoke လုပ်ပြီး အသစ်ယူပါ။")
 
-# =========================================================
-# POST INIT / SHUTDOWN
-# =========================================================
 async def post_init(application: Application):
     print("✅ Bot initialized successfully!")
 
 async def post_shutdown(application: Application):
     print("🛑 Bot shutting down...")
 
-# =========================================================
-# MAIN
-# =========================================================
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN မတွေ့ပါ။ Railway Variables မှာ BOT_TOKEN ထည့်ပါ။")
