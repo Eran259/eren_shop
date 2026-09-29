@@ -43,12 +43,12 @@ LICENSE_SECRET = "EREN_SHOP_SECRET_2026"
 # =========================================================
 # PRICE CALCULATOR
 # =========================================================
-MMK_RATE = 0.2542 * 1.20  # 1 MC = ? MMK (20% အမြတ်)
-USD_TO_MMK = 4500           # 1 USDT = ? MMK
-PROFIT_MARGIN = 1.20        # 20% အမြတ်
-USD_TO_MC = 17700           # 1 USD = 17,700 MC
+MMK_RATE = 0.2542 * 1.20
+USD_TO_MMK = 4500
+PROFIT_MARGIN = 1.20
+USD_TO_MC = 17700
 
-MC_ALERT_THRESHOLD = 100    # MC Balance သတိပေးမည့် ပမာဏ
+MC_ALERT_THRESHOLD = 100
 
 # =========================================================
 # BOT ACCESS CONTROL
@@ -733,7 +733,6 @@ def amount_keyboard(server, is_admin=False):
         amount = product.get("amount", "?")
 
         if is_admin:
-            # Admin ဆိုရင် MC ရော $ ရော ပြပါ
             mc_price = product.get("price", 0)
             try:
                 mc_price = float(mc_price)
@@ -742,7 +741,6 @@ def amount_keyboard(server, is_admin=False):
             except Exception:
                 price_text = "N/A"
         else:
-            # User ဆိုရင် MMK ဈေး ပြပါ
             mmk_price = get_mmk_price(server, amount, product)
             price_text = format_mmk(mmk_price)
 
@@ -1156,7 +1154,7 @@ async def confirm_order(query, context):
     await query.edit_message_text(text, parse_mode="HTML")
     context.user_data.clear()
 
-# =========================================================
+    # =========================================================
 # CALLBACK HANDLERS
 # =========================================================
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1726,9 +1724,9 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     app.add_error_handler(error_handler)
 
-        print("✅ Bot is running!")
+    print("✅ Bot is running!")
     app.run_polling(drop_pending_updates=True)
+
 
 if __name__ == "__main__":
     main()
-  
