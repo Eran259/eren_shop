@@ -258,7 +258,7 @@ def set_user_api(user_id, api_key, secret_key):
     conn.close()
 
 # =========================================================
-# ACCESS REQUEST (New User Register)
+# ACCESS REQUEST (New User Register Only)
 # =========================================================
 async def request_access(update, context, force_request=False):
     user = update.effective_user
@@ -315,21 +315,6 @@ async def request_access(update, context, force_request=False):
         return False
 
     if status == "approved":
-        if not is_subscription_active(user.id):
-            msg = (
-                "⚠️ <b>ငွေဆောင်ရန် လိုအပ်ပါတယ်။</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                "သင့် Bot အသုံးပြုခွင့် သက်တမ်း ကုန်ဆုံးသွားပါပြီ။\n\n"
-                "💳 <b>လစဉ်ကြေး: 15,000 MMK</b>\n\n"
-                "📌 ငွေလွှဲရန်:\n"
-                "💙 K Pay: <code>09766605879</code> (TNS)\n"
-                "💛 AYA Pay: <code>09678664100</code> (HHS)\n"
-                "💚 UAB Pay: <code>09425160424</code> (TNS)\n\n"
-                "📸 ငွေလွှဲပြီးရင် Screenshot ကို ဒီ Chat မှာ ပို့ပါ။"
-            )
-            if update.message:
-                await update.message.reply_text(msg, parse_mode="HTML")
-            return False
         return True
 
     return False
@@ -379,12 +364,6 @@ async def handle_access_callback(update, context):
                     "✅ <b>Access Approved!</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n\n"
                     "✨ Eren's Diamond Bot ကို အသုံးပြုခွင့် ရပါပြီ။\n\n"
-                    "💳 <b>လစဉ်ကြေး: 15,000 MMK</b>\n\n"
-                    "📌 ငွေလွှဲရန်:\n"
-                    "💙 K Pay: <code>09766605879</code> (TNS)\n"
-                    "💛 AYA Pay: <code>09678664100</code> (HHS)\n"
-                    "💚 UAB Pay: <code>09425160424</code> (TNS)\n\n"
-                    "📸 ငွေလွှဲပြီးရင် Screenshot ကို ဒီ Chat မှာ ပို့ပါ။\n"
                     "/start နှိပ်ပြီး စတင်ပါ။"
                 ),
                 parse_mode="HTML",
@@ -790,12 +769,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     status = get_access_status(user_id)
-    sub_active = is_subscription_active(user_id)
-    sub = get_subscription(user_id)
 
-    if status == "approved" and sub_active:
+    if status == "approved":
         status_text = "✅ <b>Active</b>"
-        expiry_text = f"📅 Expiry: <b>{sub['expiry_date']}</b>"
         footer = (
             "🛒 <b>Service များ</b>\n"
             "💎 MLBB Diamonds\n"
@@ -804,33 +780,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💳 Deposit"
         )
         show_keyboard = True
-    elif status == "approved" and not sub_active:
-        status_text = "⚠️ <b>Expired</b>"
-        expiry_text = "📅 <b>သက်တမ်းကုန်ဆုံးသွားပါပြီ။</b>"
-        footer = (
-            "💳 <b>လစဉ်ကြေး: 15,000 MMK</b>\n\n"
-            "📌 ငွေလွှဲရန်:\n"
-            "💙 K Pay: <code>09766605879</code> (TNS)\n"
-            "💛 AYA Pay: <code>09678664100</code> (HHS)\n"
-            "💚 UAB Pay: <code>09425160424</code> (TNS)\n\n"
-            "📸 ငွေလွှဲပြီးရင် Screenshot ကို ဒီ Chat မှာ ပို့ပါ။"
-        )
-        show_keyboard = False
     elif status == "pending":
         status_text = "⏳ <b>Pending</b>"
-        expiry_text = "⏳ Admin က စစ်ဆေးနေပါတယ်။"
         footer = "ခဏစောင့်ပါ။ Admin Approve ဖြစ်တဲ့အခါ Bot ကို သုံးလို့ရပါမယ်။"
         show_keyboard = False
     elif status == "rejected":
         status_text = "❌ <b>Rejected</b>"
-        expiry_text = "❌ Admin က ဒီ Bot ကို အသုံးပြုခွင့် မပေးပါ။"
         footer = "/start နှိပ်ပြီး Request ပြန်ပို့နိုင်ပါတယ်။"
         show_keyboard = False
     else:
         await request_access(update, context, force_request=True)
 
         status_text = "⏳ <b>Pending Approval</b>"
-        expiry_text = "⏳ Admin ဆီ Request ပို့ထားပါတယ်။"
         footer = "Approve ဖြစ်တဲ့အခါ Bot ကို သုံးလို့ရပါမယ်။"
         show_keyboard = False
 
@@ -839,7 +800,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "💎 <b>Eren's Diamond Bot</b>\n\n"
         f"👤 <b>Status:</b> {status_text}\n"
-        f"{expiry_text}\n"
         f"💵 <b>Balance:</b> {balance:,} MMK\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{footer}\n\n"
@@ -953,15 +913,13 @@ async def show_api_status(update: Update):
         await update.message.reply_text(f"🔴 <b>API Offline / Error</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
         return
     info = data.get("data", {})
-    tier = info.get("tier", {})
-    tier_name = tier.get("name", "Unknown")
     sandbox = info.get("is_sandbox_mode", False)
     status = "🧪 Sandbox Mode" if sandbox else "🟢 Production Mode"
     text = (
         "🔌 <b>Melostore API Status</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "🟢 Connection: <b>Connected</b>\n"
-        f"🏷️ Tier: <b>{html.escape(str(tier_name))}</b>\n"
+        f"🏷️ Tier: <b>Eren's API</b>\n"
         f"⚙️ Mode: <b>{status}</b>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "⚡ Powered by Eren"
