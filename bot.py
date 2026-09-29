@@ -356,6 +356,7 @@ async def request_access(update, context, force_request=False):
 
     return False
 
+
 async def handle_access_callback(update, context):
     query = update.callback_query
     if query.from_user.id != ADMIN_ID:
@@ -447,6 +448,7 @@ PRODUCT_CACHE_TTL = 300
 PRODUCT_LOAD_LOCK = threading.Lock()
 PRODUCT_LAST_ERROR = {}
 
+
 def api_headers(user_id=None):
     if user_id:
         user_api = get_user_api(user_id)
@@ -459,6 +461,7 @@ def api_headers(user_id=None):
         "X-API-Key": MELO_API_KEY,
         "X-Secret-Key": MELO_SECRET_KEY,
     }
+
 
 def api_get(path, params=None, user_id=None, retries=3):
     url = MELO_BASE_URL + path
@@ -486,6 +489,7 @@ def api_get(path, params=None, user_id=None, retries=3):
                 continue
             return None, str(e)
     return None, "API Error (Retry Failed)"
+
 
 def api_post(path, payload, user_id=None, retries=3):
     url = MELO_BASE_URL + path
@@ -516,8 +520,10 @@ def api_post(path, payload, user_id=None, retries=3):
             return None, str(e)
     return None, "API Error (Retry Failed)"
 
+
 def get_profile(user_id=None):
     return api_get("/api/v1/h2h/profile", user_id=user_id)
+
 
 def get_balance(user_id=None):
     return api_get("/api/v1/h2h/profile/balance", user_id=user_id)
@@ -527,30 +533,6 @@ def clean_text(value):
         return ""
     return str(value).strip()
 
-def normalize_product_name(name):
-    name = clean_text(name)
-    name = re.sub(r"(?i)\bdiamonds?\b", "", name)
-    name = name.replace(" ", "")
-    match = re.search(r"(\d+(?:\.\d+)?)\+(\d+(?:\.\d+)?)", name)
-    if match:
-        a, b = match.group(1), match.group(2)
-        def fmt(x):
-            try:
-                f = float(x)
-                return str(int(f)) if f.is_integer() else str(f)
-            except Exception:
-                return x
-        return f"{fmt(a)}+{fmt(b)}"
-    match = re.search(r"(\d+(?:\.\d+)?)", name)
-    if match:
-        value = match.group(1)
-        try:
-            f = float(value)
-            return str(int(f)) if f.is_integer() else value
-        except Exception:
-            pass
-        return value
-    return name
 
 def format_amount_for_display(amount):
     try:
@@ -563,6 +545,7 @@ def format_amount_for_display(amount):
     except Exception:
         return str(amount)
 
+
 def diamond_sort_key(product):
     amount = product.get("amount", "")
     match = re.search(r"(\d+(?:\.\d+)?)", str(amount))
@@ -573,9 +556,13 @@ def diamond_sort_key(product):
             pass
     return 999999999
 
+
 def load_server_products(server):
+    """
+    Smart Pricelist endpoint ကနေ products တွေ load လုပ်ပါ
+    """
     params = {"limit": 1000}
-    data, error = api_get("/api/v1/h2h/pricelists", params=params)
+    data, error = api_get("/api/v1/h2h/smart-pricelists", params=params)
     if error:
         PRODUCT_LAST_ERROR[server] = error
         print(f"❌ API Error [{server}]: {error}")
@@ -588,39 +575,78 @@ def load_server_products(server):
     brand_map = {str(x.get("id")): x.get("name", "") for x in brands if isinstance(x, dict)}
 
     print(f"🏷️ Brand Map for {server}: {brand_map}")
-    print(f"📦 API returned {len(rows)} products for {server}")
+    print(f"📦 API returned {len(rows)} smart products for {server}")
 
     products = []
     for product in rows:
         brand_id = str(product.get("brand_id", ""))
         brand_name = brand_map.get(brand_id, "")
-        brand_text = f"{brand_name} {product.get('name', '')} {product.get('type_name', '')}".lower()
+        name_text = f"{brand_name} {product.get('name', '')} {product.get('type_name', '')}".lower()
 
+        # MLBB filter
+        if "ml diamonds" not in name_text and "mobile legends" not in name_text:
+            continue
+
+        # Server filter
         product_server = None
-        if "global" in brand_text:
+        if "mobile legends (indonesia)" in name_text or "(id)" in name_text:
             product_server = "Global"
-        elif "mobile legends (id)" in brand_text or "indonesia" in brand_text or "(id)" in brand_text:
-            product_server = "Global"
-        elif "malaysia" in brand_text or "(my)" in brand_text:
+        elif "malaysia" in name_text or "(my)" in name_text:
             product_server = "Malaysia"
-        elif "singapore" in brand_text or "(sg)" in brand_text:
+        elif "singapore" in name_text or "(sg)" in name_text:
             product_server = "Singapore"
-        elif "turkey" in brand_text or "(tr)" in brand_text:
+        elif "turkey" in name_text or "(tr)" in name_text:
             product_server = "Turkey"
-        elif "philippines" in brand_text or "(ph)" in brand_text:
+        elif "philippines" in name_text or "(ph)" in name_text:
             product_server = "Philippines"
-        elif "brazil" in brand_text or "(br)" in brand_text:
+        elif "brazil" in name_text or "(br)" in name_text:
             product_server = "Brazil"
+        elif "global" in name_text:
+            product_server = "Global"
 
-        if product_server == server:
-            item = dict(product)
-            item["server"] = server
-            item["amount"] = normalize_product_name(product.get("name", ""))
-            if item["amount"]:
-                products.append(item)
+        if product_server != server:
+            continue
+
+        # Diamond Amount ကို name ကနေ ဆွဲထုတ်
+        name = product.get("name", "")
+        match = re.search(r"(\d+(?:\.\d+)?)\s*Diamonds?", name, re.IGNORECASE)
+        if match:
+            raw = match.group(1)
+            try:
+                f = float(raw)
+                amount = str(int(f)) if f.is_integer() else str(f)
+            except Exception:
+                amount = raw
+        else:
+            # "Weekly Pass" လိုမျိုး
+            amount = re.sub(r"(?i)\bmobile\s*legends?\b", "", name)
+            amount = re.sub(r"(?i)\bdiamonds?\b", "", amount)
+            amount = amount.replace(" ", "").strip() or "unknown"
+
+        # Active variant ကို ရွေး
+        variants = product.get("variants", [])
+        active_variants = [v for v in variants if v.get("status") == "active"]
+        if not active_variants:
+            active_variants = variants
+
+        if active_variants:
+            cheapest = min(active_variants, key=lambda v: v.get("price", 0))
+            sku = cheapest.get("sku_code", "")
+            price = cheapest.get("price", 0)
+        else:
+            sku = product.get("smart_sku_code", "")
+            price = product.get("min_price", 0)
+
+        item = dict(product)
+        item["server"] = server
+        item["amount"] = amount
+        item["sku_code"] = sku
+        item["price"] = price
+        products.append(item)
 
     print(f"✅ Filtered {len(products)} MLBB products for {server}")
     return sorted(products, key=diamond_sort_key), None
+
 
 def refresh_products(server=None, force=False):
     global PRODUCT_CACHE, LAST_PRODUCTS_LOAD
@@ -640,6 +666,7 @@ def refresh_products(server=None, force=False):
         LAST_PRODUCTS_LOAD = now
     return PRODUCT_CACHE
 
+
 def ensure_server_products(server):
     now = time.time()
     if PRODUCT_CACHE.get(server) and (now - LAST_PRODUCTS_LOAD) < PRODUCT_CACHE_TTL:
@@ -647,6 +674,7 @@ def ensure_server_products(server):
     refresh_products(server=server, force=True)
     products = PRODUCT_CACHE.get(server, [])
     return products, PRODUCT_LAST_ERROR.get(server) if not products else None
+
 
 def get_mc_price(server, amount, product=None):
     manual = get_manual_price(server, amount)
@@ -656,6 +684,7 @@ def get_mc_price(server, amount, product=None):
         return round(final_mc, 3)
     return None
 
+
 def format_mc(price):
     if price is None:
         return "Price မသတ်မှတ်ရသေး"
@@ -663,6 +692,7 @@ def format_mc(price):
         return f"{float(price):.3f} MC"
     except Exception:
         return f"{price} MC"
+
 
 async def check_mc_balance_alert(context, current_mc):
     if current_mc < MC_ALERT_THRESHOLD:
@@ -692,6 +722,7 @@ def main_keyboard():
         resize_keyboard=True,
     )
 
+
 def server_keyboard():
     return InlineKeyboardMarkup(
         [
@@ -704,17 +735,23 @@ def server_keyboard():
         ]
     )
 
-def amount_keyboard(server, is_admin=False, page=0, per_page=15):
+
+def get_unique_products(server):
+    """Product list ကို amount အလိုက် unique ဖြစ်အောင် filter လုပ်ပါ"""
     products = PRODUCT_CACHE.get(server, [])
     seen_amounts = set()
     unique_products = []
-
     for product in products:
         amount = product.get("amount", "?")
         if amount in seen_amounts:
             continue
         seen_amounts.add(amount)
         unique_products.append(product)
+    return unique_products
+
+
+def amount_keyboard(server, is_admin=False, page=0, per_page=15):
+    unique_products = get_unique_products(server)
 
     total = len(unique_products)
     start = page * per_page
@@ -805,7 +842,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         show_keyboard = False
     else:
         await request_access(update, context, force_request=True)
-
         status_text = "⏳ <b>Pending Approval</b>"
         footer = "Approve ဖြစ်တဲ့အခါ Bot ကို သုံးလို့ရပါမယ်။"
         show_keyboard = False
@@ -825,6 +861,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
     else:
         await update.message.reply_text(text, parse_mode="HTML")
+
 
 async def show_my_balance(update: Update):
     user_id = update.effective_user.id
@@ -866,6 +903,7 @@ async def show_my_balance(update: Update):
 
     await update.message.reply_text(text, parse_mode="HTML")
 
+
 async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Admin only")
@@ -898,6 +936,7 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
+
 async def show_deposit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "💳 <b>ငွေဖြည့်ရန် (Deposit)</b>\n"
@@ -918,6 +957,7 @@ async def show_deposit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
+
 async def open_mlbb(update: Update):
     await update.message.reply_text(
         "💎 <b>MLBB Diamond Top-Up</b>\n"
@@ -927,10 +967,14 @@ async def open_mlbb(update: Update):
         reply_markup=server_keyboard(),
     )
 
+
 async def show_api_status(update: Update):
     data, error = get_profile()
     if error:
-        await update.message.reply_text(f"🔴 <b>API Offline / Error</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
+        await update.message.reply_text(
+            f"🔴 <b>API Offline / Error</b>\n\n{html.escape(str(error))}",
+            parse_mode="HTML",
+        )
         return
     info = data.get("data", {})
     sandbox = info.get("is_sandbox_mode", False)
@@ -958,6 +1002,7 @@ async def start_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
+
 def check_ml_nickname(player_id, zone_id):
     payload = {
         "game_code": "mobile-legends",
@@ -966,18 +1011,25 @@ def check_ml_nickname(player_id, zone_id):
     }
     return api_post("/api/v1/h2h/check-nickname", payload)
 
+
 async def process_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player_id = context.user_data.get("check_player_id")
     zone_id = update.message.text.strip()
     if not zone_id.isdigit():
-        await update.message.reply_text("❌ Zone ID မှာ နံပါတ်ပဲ ထည့်ပါ။\n\nဥပမာ: <code>2039</code>", parse_mode="HTML")
+        await update.message.reply_text(
+            "❌ Zone ID မှာ နံပါတ်ပဲ ထည့်ပါ။\n\nဥပမာ: <code>2039</code>",
+            parse_mode="HTML",
+        )
         return
 
     await update.message.reply_text("🔍 <b>Checking MLBB ID...</b>\nခဏစောင့်ပါ...", parse_mode="HTML")
     data, error = check_ml_nickname(player_id, zone_id)
 
     if error:
-        await update.message.reply_text(f"❌ <b>Check ID Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
+        await update.message.reply_text(
+            f"❌ <b>Check ID Failed</b>\n\n{html.escape(str(error))}",
+            parse_mode="HTML",
+        )
         context.user_data.clear()
         return
 
@@ -998,6 +1050,7 @@ async def process_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text(text, parse_mode="HTML")
 
+
 async def process_order_player_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player_id = update.message.text.strip()
     if not player_id.isdigit():
@@ -1005,7 +1058,11 @@ async def process_order_player_id(update: Update, context: ContextTypes.DEFAULT_
         return
     context.user_data["player_id"] = player_id
     context.user_data["state"] = "order_zone_id"
-    await update.message.reply_text("🌐 <b>Zone ID</b> ထည့်ပါ။\n\nဥပမာ: <code>2039</code>", parse_mode="HTML")
+    await update.message.reply_text(
+        "🌐 <b>Zone ID</b> ထည့်ပါ။\n\nဥပမာ: <code>2039</code>",
+        parse_mode="HTML",
+    )
+
 
 async def process_order_zone_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     zone_id = update.message.text.strip()
@@ -1018,7 +1075,10 @@ async def process_order_zone_id(update: Update, context: ContextTypes.DEFAULT_TY
 
     data, error = check_ml_nickname(player_id, zone_id)
     if error:
-        await update.message.reply_text(f"❌ <b>ID Check Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
+        await update.message.reply_text(
+            f"❌ <b>ID Check Failed</b>\n\n{html.escape(str(error))}",
+            parse_mode="HTML",
+        )
         context.user_data.clear()
         return
 
@@ -1067,6 +1127,7 @@ async def process_order_zone_id(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data["state"] = "order_confirm"
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
+
 def create_transaction(product, player_id, zone_id):
     sku = product.get("sku_code")
     buyer_trx_id = "EREN-" + uuid.uuid4().hex[:20].upper()
@@ -1078,6 +1139,7 @@ def create_transaction(product, player_id, zone_id):
         "sandbox_mode": MELO_SANDBOX,
     }
     return api_post("/api/v1/h2h/transaction", payload)
+
 
 async def confirm_order(query, context):
     server = context.user_data.get("server")
@@ -1117,7 +1179,10 @@ async def confirm_order(query, context):
     data, error = create_transaction(product, player_id, zone_id)
 
     if error:
-        await query.edit_message_text(f"❌ <b>Order Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
+        await query.edit_message_text(
+            f"❌ <b>Order Failed</b>\n\n{html.escape(str(error))}",
+            parse_mode="HTML",
+        )
         context.user_data.clear()
         return
 
@@ -1233,7 +1298,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         is_admin = (query.from_user.id == ADMIN_ID)
-        total = len(PRODUCT_CACHE.get(server, []))
+        total = len(get_unique_products(server))
 
         if is_admin:
             header = (
@@ -1297,7 +1362,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         is_admin = (query.from_user.id == ADMIN_ID)
-        total = len(products)
+        total = len(get_unique_products(server))
 
         if is_admin:
             header = (
@@ -1333,16 +1398,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             return
 
-        # amount_keyboard နဲ့ တူညီတဲ့ unique list ဖန်တီးပါ
-        products_raw = PRODUCT_CACHE.get(server, [])
-        seen_amounts = set()
-        products = []
-        for p in products_raw:
-            amt = p.get("amount", "?")
-            if amt in seen_amounts:
-                continue
-            seen_amounts.add(amt)
-            products.append(p)
+        products = get_unique_products(server)
 
         if index < 0 or index >= len(products):
             await query.answer("❌ Product မတွေ့ပါ။", show_alert=True)
@@ -1549,7 +1605,10 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         context.user_data["check_player_id"] = text
         context.user_data["state"] = "check_id_zone"
-        await update.message.reply_text("🌐 <b>Zone ID</b> ထည့်ပါ။\n\nဥပမာ: <code>2039</code>", parse_mode="HTML")
+        await update.message.reply_text(
+            "🌐 <b>Zone ID</b> ထည့်ပါ။\n\nဥပမာ: <code>2039</code>",
+            parse_mode="HTML",
+        )
         return
 
     if state == "check_id_zone":
@@ -1631,7 +1690,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("❓ Menu ကနေရွေးပေးပါ။", reply_markup=main_keyboard())
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await request_access(update, context):
         return
     text = (
@@ -1646,6 +1705,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start — Main Menu"
     )
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
+
 
 async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -1691,12 +1751,16 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         print("BALANCE NOTIFY ERROR:", e)
 
+
 async def check_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     args = context.args
     if len(args) != 1:
-        await update.message.reply_text("❌ အသုံးပြုနည်း: <code>/checkbalance USER_ID</code>", parse_mode="HTML")
+        await update.message.reply_text(
+            "❌ အသုံးပြုနည်း: <code>/checkbalance USER_ID</code>",
+            parse_mode="HTML",
+        )
         return
     try:
         user_id = int(args[0])
@@ -1711,6 +1775,7 @@ async def check_balance_command(update: Update, context: ContextTypes.DEFAULT_TY
         f"🪙 Balance: <b>{balance:.3f} MC</b>",
         parse_mode="HTML",
     )
+
 
 async def add_subscription_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -1757,12 +1822,16 @@ async def add_subscription_command(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         print("SUB NOTIFY ERROR:", e)
 
+
 async def check_subscription_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     args = context.args
     if len(args) != 1:
-        await update.message.reply_text("❌ အသုံးပြုနည်း: <code>/checksub USER_ID</code>", parse_mode="HTML")
+        await update.message.reply_text(
+            "❌ အသုံးပြုနည်း: <code>/checksub USER_ID</code>",
+            parse_mode="HTML",
+        )
         return
     try:
         user_id = int(args[0])
@@ -1772,7 +1841,10 @@ async def check_subscription_command(update: Update, context: ContextTypes.DEFAU
 
     sub = get_subscription(user_id)
     if not sub:
-        await update.message.reply_text(f"❌ User ID <code>{user_id}</code> အတွက် Subscription မရှိပါ။", parse_mode="HTML")
+        await update.message.reply_text(
+            f"❌ User ID <code>{user_id}</code> အတွက် Subscription မရှိပါ။",
+            parse_mode="HTML",
+        )
         return
 
     await update.message.reply_text(
@@ -1784,9 +1856,6 @@ async def check_subscription_command(update: Update, context: ContextTypes.DEFAU
         parse_mode="HTML",
     )
 
-# =========================================================
-# PRICE COMMANDS (MC Only)
-# =========================================================
 async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -1794,8 +1863,8 @@ async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(args) != 3:
         await update.message.reply_text(
             "❌ အသုံးပြုနည်း: <code>/setprice SERVER AMOUNT MC</code>\n\n"
-            "ဥပမာ: <code>/setprice Global 5 1.660</code>\n"
-            "ဥပမာ: <code>/setprice Global weeklypass 26.815</code>",
+            "ဥပမာ: <code>/setprice Global 86 1.660</code>\n"
+            "ဥပမာ: <code>/setprice Global 172 3.200</code>",
             parse_mode="HTML",
         )
         return
@@ -1827,6 +1896,7 @@ async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
     )
 
+
 async def delete_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -1834,7 +1904,7 @@ async def delete_price_command(update: Update, context: ContextTypes.DEFAULT_TYP
     if len(args) != 2:
         await update.message.reply_text(
             "❌ အသုံးပြုနည်း: <code>/delprice SERVER AMOUNT</code>\n"
-            "ဥပမာ: <code>/delprice Global 5</code>",
+            "ဥပမာ: <code>/delprice Global 86</code>",
             parse_mode="HTML",
         )
         return
@@ -1849,6 +1919,7 @@ async def delete_price_command(update: Update, context: ContextTypes.DEFAULT_TYP
         f"💎 Amount: <b>{amount}</b>",
         parse_mode="HTML",
     )
+
 
 async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -1888,7 +1959,6 @@ async def post_init(application: Application):
 
 async def post_shutdown(application: Application):
     print("🛑 Bot shutting down...")
-
 
 def main():
     if not BOT_TOKEN:
