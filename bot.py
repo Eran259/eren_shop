@@ -40,11 +40,11 @@ MELO_SANDBOX = os.getenv("MELO_SANDBOX", "true").lower() == "true"
 LICENSE_KEY = os.getenv("LICENSE_KEY", "")
 LICENSE_SECRET = "EREN_SHOP_SECRET_2026"
 
-USD_TO_MMK = 4500
-PROFIT_MARGIN = 1.20
-USD_TO_MC = 17700
-
-MC_ALERT_THRESHOLD = 100
+# =========================================================
+# MC PRICE CONFIG
+# =========================================================
+MC_PROFIT_MARGIN = 1.20  # 20% အမြတ်
+MC_ALERT_THRESHOLD = 100  # MC Alert
 
 ADMIN_ID = 5698123475
 
@@ -102,7 +102,7 @@ def init_balance_db():
     conn = sqlite3.connect(USER_BALANCE_DB)
     conn.execute("""CREATE TABLE IF NOT EXISTS user_balance (
         user_id INTEGER PRIMARY KEY,
-        balance INTEGER DEFAULT 0,
+        balance REAL DEFAULT 0.0,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""")
     conn.commit()
@@ -112,7 +112,7 @@ def get_user_balance(user_id):
     conn = sqlite3.connect(USER_BALANCE_DB)
     row = conn.execute("SELECT balance FROM user_balance WHERE user_id=?", (int(user_id),)).fetchone()
     conn.close()
-    return row[0] if row else 0
+    return row[0] if row else 0.0
 
 def add_user_balance(user_id, amount):
     conn = sqlite3.connect(USER_BALANCE_DB)
@@ -121,7 +121,7 @@ def add_user_balance(user_id, amount):
         ON CONFLICT(user_id) DO UPDATE SET
         balance = balance + ?,
         updated_at = CURRENT_TIMESTAMP
-    """, (int(user_id), int(amount), int(amount)))
+    """, (int(user_id), float(amount), float(amount)))
     conn.commit()
     conn.close()
 
@@ -129,7 +129,7 @@ def deduct_user_balance(user_id, amount):
     conn = sqlite3.connect(USER_BALANCE_DB)
     conn.execute("""UPDATE user_balance SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP
         WHERE user_id = ? AND balance >= ?
-    """, (int(amount), int(user_id), int(amount)))
+    """, (float(amount), int(user_id), float(amount)))
     affected = conn.total_changes
     conn.commit()
     conn.close()
@@ -249,8 +249,6 @@ def init_manual_price_db():
         server TEXT NOT NULL,
         amount TEXT NOT NULL,
         mc_price REAL NOT NULL,
-        usd_price REAL NOT NULL,
-        mmk_price INTEGER NOT NULL,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(server, amount)
     )""")
@@ -260,25 +258,22 @@ def init_manual_price_db():
 def get_manual_price(server, amount):
     conn = sqlite3.connect(MANUAL_PRICE_DB)
     row = conn.execute(
-        "SELECT mc_price, usd_price, mmk_price FROM manual_price WHERE server=? AND amount=?",
+        "SELECT mc_price FROM manual_price WHERE server=? AND amount=?",
         (server, amount)
     ).fetchone()
     conn.close()
     if row:
-        return {"mc_price": row[0], "usd_price": row[1], "mmk_price": row[2]}
+        return {"mc_price": row[0]}
     return None
 
-def set_manual_price(server, amount, mc_price, usd_price, mmk_price):
+def set_manual_price(server, amount, mc_price):
     conn = sqlite3.connect(MANUAL_PRICE_DB)
-    conn.execute("""INSERT INTO manual_price (server, amount, mc_price, usd_price, mmk_price, updated_at)
-        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    conn.execute("""INSERT INTO manual_price (server, amount, mc_price, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(server, amount) DO UPDATE SET
         mc_price = ?,
-        usd_price = ?,
-        mmk_price = ?,
         updated_at = CURRENT_TIMESTAMP
-    """, (server, amount, float(mc_price), float(usd_price), int(mmk_price),
-          float(mc_price), float(usd_price), int(mmk_price)))
+    """, (server, amount, float(mc_price), float(mc_price)))
     conn.commit()
     conn.close()
 
@@ -286,12 +281,12 @@ def get_all_manual_prices(server=None):
     conn = sqlite3.connect(MANUAL_PRICE_DB)
     if server:
         rows = conn.execute(
-            "SELECT server, amount, mc_price, usd_price, mmk_price FROM manual_price WHERE server=? ORDER BY amount",
+            "SELECT server, amount, mc_price FROM manual_price WHERE server=? ORDER BY amount",
             (server,)
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT server, amount, mc_price, usd_price, mmk_price FROM manual_price ORDER BY server, amount"
+            "SELECT server, amount, mc_price FROM manual_price ORDER BY server, amount"
         ).fetchall()
     conn.close()
     return rows
@@ -653,27 +648,22 @@ def ensure_server_products(server):
     products = PRODUCT_CACHE.get(server, [])
     return products, PRODUCT_LAST_ERROR.get(server) if not products else None
 
-def get_mmk_price(server, amount, product=None):
+def get_mc_price(server, amount, product=None):
+    """Product ရဲ့ MC ဈေးကို ယူပါ (Manual Price ကနေ)"""
     manual = get_manual_price(server, amount)
     if manual:
-        return int(manual["mmk_price"])
-
-    price = MMK_PRICES.get(server, {}).get(amount)
-    if price is not None:
-        try:
-            return int(price)
-        except Exception:
-            return price
-
+        base_mc = manual["mc_price"]
+        final_mc = base_mc * MC_PROFIT_MARGIN
+        return round(final_mc, 3)
     return None
 
-def format_mmk(price):
+def format_mc(price):
     if price is None:
         return "Price မသတ်မှတ်ရသေး"
     try:
-        return f"{int(price):,} MMK"
+        return f"{float(price):.3f} MC"
     except Exception:
-        return f"{price} MMK"
+        return f"{price} MC"
 
 async def check_mc_balance_alert(context, current_mc):
     if current_mc < MC_ALERT_THRESHOLD:
@@ -738,19 +728,12 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=15):
     for index, product in enumerate(page_items):
         amount = product.get("amount", "?")
         display_amount = format_amount_for_display(amount)
+        mc_price = get_mc_price(server, amount, product)
 
-        if is_admin:
-            manual = get_manual_price(server, amount)
-            if manual:
-                price_text = f"{manual['mc_price']:.2f} MC (${manual['usd_price']:.2f})"
-            else:
-                price_text = "No Price"
+        if mc_price is None:
+            price_text = "No Price"
         else:
-            mmk_price = get_mmk_price(server, amount, product)
-            if mmk_price is None:
-                price_text = "No Price"
-            else:
-                price_text = f"{mmk_price:,} MMK"
+            price_text = format_mc(mc_price)
 
         button_text = f"💎 {display_amount} • {price_text}"
         real_index = start + index
@@ -788,7 +771,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "💎 <b>Eren's Diamond Bot</b> မှ ကြိုဆိုပါတယ်။\n\n"
             f"👑 <b>Status:</b> Admin\n"
-            f"💵 <b>Balance:</b> {balance:,} MMK\n\n"
+            f"🪙 <b>Balance:</b> {balance:.3f} MC\n\n"
             "🛒 <b>Service များ</b>\n"
             "💎 MLBB Diamonds\n"
             "🔍 Check ML ID\n"
@@ -833,7 +816,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "💎 <b>Eren's Diamond Bot</b>\n\n"
         f"👤 <b>Status:</b> {status_text}\n"
-        f"💵 <b>Balance:</b> {balance:,} MMK\n\n"
+        f"🪙 <b>Balance:</b> {balance:.3f} MC\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{footer}\n\n"
         "⚡ Powered by Eren"
@@ -857,8 +840,8 @@ async def show_my_balance(update: Update):
             text = (
                 "💰 <b>Balance</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"💵 <b>User Balance</b>\n"
-                f"<b>{user_balance:,} MMK</b>\n\n"
+                f"🪙 <b>User Balance (Your MC)</b>\n"
+                f"<b>{user_balance:.3f} MC</b>\n\n"
                 f"🪙 <b>Melostore MC Balance</b>\n"
                 f"<b>{mc_balance:,.2f} MC</b>\n\n"
                 f"💵 USD Value\n"
@@ -869,8 +852,8 @@ async def show_my_balance(update: Update):
             text = (
                 "💰 <b>Balance</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"💵 <b>User Balance</b>\n"
-                f"<b>{user_balance:,} MMK</b>\n\n"
+                f"🪙 <b>User Balance (Your MC)</b>\n"
+                f"<b>{user_balance:.3f} MC</b>\n\n"
                 f"🪙 <b>Melostore MC Balance</b>\n"
                 f"<i>Error: {html.escape(str(error)[:50])}</i>"
             )
@@ -878,7 +861,7 @@ async def show_my_balance(update: Update):
         text = (
             "💰 <b>သင့်ရဲ့ Balance</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"💵 Balance: <b>{user_balance:,} MMK</b>\n\n"
+            f"🪙 Balance: <b>{user_balance:.3f} MC</b>\n\n"
             "💳 ငွေဖြည့်ချင်ရင် <b>Deposit</b> ကို နှိပ်ပါ။"
         )
 
@@ -901,18 +884,18 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "📊 <b>Admin Panel</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🪙 MC Balance: <b>{balance:,.2f} MC</b>\n"
+        f"🪙 Melostore MC Balance: <b>{balance:,.2f} MC</b>\n"
         f"💵 USD Value: <b>${usd:,.2f}</b>\n\n"
         "💡 <b>Balance Commands</b>\n"
-        "/addbalance USER_ID AMOUNT — User Balance ဖြည့်\n"
-        "/checkbalance USER_ID — User Balance ကြည့်\n"
+        "/addbalance USER_ID MC — User MC Balance ဖြည့်\n"
+        "/checkbalance USER_ID — User MC Balance ကြည့်\n"
         "/addsub USER_ID — Subscription ဖြည့်\n"
         "/checksub USER_ID — Subscription ကြည့်\n\n"
         "💰 <b>Price Commands</b>\n"
-        "/setprice SERVER AMOUNT MC USD — ဈေးသတ်မှတ်\n"
-        "/delprice SERVER AMOUNT — ဈေးဖျက်\n"
-        "/listprices SERVER — ဈေးစာရင်း\n\n"
-        "📐 <b>Formula:</b> MMK = USD × 4,500 × 1.20"
+        "/setprice SERVER AMOUNT MC — MC ဈေးသတ်မှတ်\n"
+        "/delprice SERVER AMOUNT — MC ဈေးဖျက်\n"
+        "/listprices SERVER — MC ဈေးစာရင်း\n\n"
+        f"📐 <b>Formula:</b> Final MC = Base MC × {MC_PROFIT_MARGIN}"
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
@@ -932,7 +915,7 @@ async def show_deposit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👤 TNS\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "📸 ငွေလွှဲပြီးရင် <b>Screenshot</b> ကို ဒီ Chat မှာ ပို့ပါ။\n"
-        "Admin က စစ်ဆေးပြီး Balance ဖြည့်ပေးပါမယ်။"
+        "Admin က စစ်ဆေးပြီး MC Balance ဖြည့်ပေးပါမယ်။"
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
@@ -1048,16 +1031,16 @@ async def process_order_zone_id(update: Update, context: ContextTypes.DEFAULT_TY
     product = context.user_data.get("product", {})
     amount = product.get("amount", "?")
     display_amount = format_amount_for_display(amount)
-    price = get_mmk_price(server, amount, product)
-    price_text = format_mmk(price)
+    mc_price = get_mc_price(server, amount, product)
+    price_text = format_mc(mc_price)
 
     user_id = update.effective_user.id
     user_balance = get_user_balance(user_id)
     balance_warning = ""
-    if price and user_balance < price:
+    if mc_price and user_balance < mc_price:
         balance_warning = (
-            f"\n⚠️ <b>Balance မလုံလောက်ပါ။</b>\n"
-            f"💵 လက်ရှိ: <b>{user_balance:,} MMK</b>\n"
+            f"\n⚠️ <b>MC Balance မလုံလောက်ပါ။</b>\n"
+            f"🪙 လက်ရှိ: <b>{user_balance:.3f} MC</b>\n"
             f"💳 Deposit လုပ်ဖို့ လိုအပ်ပါတယ်။\n"
         )
 
@@ -1070,8 +1053,8 @@ async def process_order_zone_id(update: Update, context: ContextTypes.DEFAULT_TY
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🌍 Server: <b>{html.escape(server)}</b>\n"
         f"💎 Diamond: <b>{html.escape(display_amount)}</b>\n"
-        f"💰 Price: <b>{html.escape(price_text)}</b>\n\n"
-        f"💵 သင့် Balance: <b>{user_balance:,} MMK</b>\n"
+        f"🪙 MC Price: <b>{html.escape(price_text)}</b>\n\n"
+        f"🪙 သင့် Balance: <b>{user_balance:.3f} MC</b>\n"
         f"{balance_warning}\n"
         "အချက်အလက်မှန်ကန်ရင် Order တင်နိုင်ပါတယ်။"
     )
@@ -1112,19 +1095,19 @@ async def confirm_order(query, context):
 
     amount = product.get("amount", "?")
     display_amount = format_amount_for_display(amount)
-    price = get_mmk_price(server, amount, product)
+    mc_price = get_mc_price(server, amount, product)
 
-    if price is None:
+    if mc_price is None:
         await query.edit_message_text("⚠️ <b>Price မသတ်မှတ်ရသေးပါ။</b>", parse_mode="HTML")
         context.user_data.clear()
         return
 
     user_balance = get_user_balance(user_id)
-    if user_balance < price:
+    if user_balance < mc_price:
         await query.edit_message_text(
-            f"❌ <b>Balance မလုံလောက်ပါ။</b>\n\n"
-            f"💵 လက်ရှိ: <b>{user_balance:,} MMK</b>\n"
-            f"💰 လိုအပ်: <b>{price:,} MMK</b>\n\n"
+            f"❌ <b>MC Balance မလုံလောက်ပါ။</b>\n\n"
+            f"🪙 လက်ရှိ: <b>{user_balance:.3f} MC</b>\n"
+            f"💰 လိုအပ်: <b>{mc_price:.3f} MC</b>\n\n"
             f"💳 Deposit လုပ်ပြီးမှ Order တင်ပါ။",
             parse_mode="HTML",
         )
@@ -1136,33 +1119,6 @@ async def confirm_order(query, context):
 
     if error:
         await query.edit_message_text(f"❌ <b>Order Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
-        
-        # Admin ဆီ Fail Alarm ပို့ပါ
-        try:
-            user_obj = query.from_user
-            username = f"@{user_obj.username}" if user_obj.username else "—"
-            first_name = user_obj.first_name or "User"
-            order_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=(
-                    "❌ <b>ORDER FAILED!</b>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"👤 Name: <b>{html.escape(first_name)}</b>\n"
-                    f"🔗 Username: <b>{html.escape(username)}</b>\n"
-                    f"🆔 User ID: <code>{user_id}</code>\n\n"
-                    f"🌍 Server: <b>{html.escape(str(server))}</b>\n"
-                    f"💎 Diamond: <b>{html.escape(display_amount)}</b>\n"
-                    f"💰 Price: <b>{format_mmk(price)}</b>\n\n"
-                    f"⚠️ <b>Error:</b>\n{html.escape(str(error))}\n\n"
-                    f"⏰ Time: <code>{order_time}</code>"
-                ),
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            print("FAIL ALARM ERROR:", e)
-
         context.user_data.clear()
         return
 
@@ -1171,7 +1127,7 @@ async def confirm_order(query, context):
     status = result.get("status", "pending")
     order_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    if deduct_user_balance(user_id, price):
+    if deduct_user_balance(user_id, mc_price):
         new_balance = get_user_balance(user_id)
     else:
         new_balance = user_balance
@@ -1184,50 +1140,36 @@ async def confirm_order(query, context):
         f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
         f"🌍 Server: <b>{html.escape(str(server))}</b>\n"
         f"💎 Diamond: <b>{html.escape(display_amount)}</b>\n"
-        f"💰 Price: <b>{format_mmk(price)}</b>\n\n"
+        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
         f"🆔 Transaction: <code>{html.escape(str(transaction_id))}</code>\n"
         f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n\n"
-        f"💵 လက်ကျန် Balance: <b>{new_balance:,} MMK</b>\n\n"
+        f"🪙 လက်ကျန် MC: <b>{new_balance:.3f} MC</b>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "⚡ Powered by Eren"
     )
     await query.edit_message_text(text, parse_mode="HTML")
 
-    # =========================================================
-    # ADMIN ORDER ALARM
-    # =========================================================
+    # Admin Alarm
     try:
         user_obj = query.from_user
         username = f"@{user_obj.username}" if user_obj.username else "—"
         first_name = user_obj.first_name or "User"
-        
-        manual = get_manual_price(server, amount)
-        mc_cost = manual["mc_price"] if manual else 0
-        usd_cost = manual["usd_price"] if manual else 0
 
         alarm_text = (
             "🔔 <b>NEW DIAMOND ORDER!</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "👤 <b>Customer Info</b>\n"
-            f"  • Name: <b>{html.escape(first_name)}</b>\n"
-            f"  • Username: <b>{html.escape(username)}</b>\n"
-            f"  • User ID: <code>{user_id}</code>\n\n"
-            "🎮 <b>Game Info</b>\n"
-            f"  • Server: <b>{html.escape(str(server))}</b>\n"
-            f"  • Nickname: <b>{html.escape(str(nickname))}</b>\n"
-            f"  • Player ID: <code>{html.escape(str(player_id))}</code>\n"
-            f"  • Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
-            "💎 <b>Order Info</b>\n"
-            f"  • Diamond: <b>{html.escape(display_amount)}</b>\n"
-            f"  • MMK Price: <b>{format_mmk(price)}</b>\n"
-            f"  • MC Cost: <b>{mc_cost:.3f} MC</b>\n"
-            f"  • USD Cost: <b>${usd_cost:.3f}</b>\n\n"
-            "🧾 <b>Transaction</b>\n"
-            f"  • Trx ID: <code>{html.escape(str(transaction_id))}</code>\n"
-            f"  • Status: <b>{html.escape(str(status).upper())}</b>\n"
-            f"  • Time: <code>{order_time}</code>\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "⚡ Powered by Eren"
+            f"👤 Name: <b>{html.escape(first_name)}</b>\n"
+            f"🔗 Username: <b>{html.escape(username)}</b>\n"
+            f"🆔 User ID: <code>{user_id}</code>\n\n"
+            f"🌍 Server: <b>{html.escape(str(server))}</b>\n"
+            f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
+            f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
+            f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
+            f"💎 Diamond: <b>{html.escape(display_amount)}</b>\n"
+            f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+            f"🧾 Trx ID: <code>{html.escape(str(transaction_id))}</code>\n"
+            f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n"
+            f"⏰ Time: <code>{order_time}</code>"
         )
 
         await context.bot.send_message(
@@ -1235,8 +1177,6 @@ async def confirm_order(query, context):
             text=alarm_text,
             parse_mode="HTML",
         )
-        print(f"✅ Order Alarm Sent: {transaction_id}")
-
     except Exception as e:
         print("ORDER ALARM ERROR:", e)
 
@@ -1405,47 +1345,24 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["product"] = product
         amount = product.get("amount", "?")
         display_amount = format_amount_for_display(amount)
-        price = get_mmk_price(server, amount, product)
+        mc_price = get_mc_price(server, amount, product)
         sku = product.get("sku_code", "")
         context.user_data["sku"] = sku
-        price_text = format_mmk(price)
+        price_text = format_mc(mc_price)
 
         user_id = query.from_user.id
         user_balance = get_user_balance(user_id)
 
-        if user_id == ADMIN_ID:
-            manual = get_manual_price(server, amount)
-            if manual:
-                mc_text = f"{manual['mc_price']:.3f} MC"
-                usd_text = f"${manual['usd_price']:.3f}"
-            else:
-                mc_text = "N/A"
-                usd_text = "N/A"
-
-            text = (
-                "💎 <b>Selected Product</b> (Admin View)\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"🌍 Server: <b>{html.escape(server)}</b>\n"
-                f"💎 Amount: <b>{html.escape(display_amount)}</b>\n"
-                f"💰 MMK Price: <b>{html.escape(price_text)}</b>\n"
-                f"🪙 MC Price: <b>{html.escape(mc_text)}</b>\n"
-                f"💵 USD Price: <b>{html.escape(usd_text)}</b>\n"
-                f"🔖 SKU: <code>{html.escape(sku)}</code>\n\n"
-                f"💵 သင့် Balance: <b>{user_balance:,} MMK</b>\n\n"
-                "🆔 <b>Player ID</b> ထည့်ပါ။\n"
-                "ဥပမာ: <code>12345678</code>"
-            )
-        else:
-            text = (
-                "💎 <b>Selected Product</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"🌍 Server: <b>{html.escape(server)}</b>\n"
-                f"💎 Amount: <b>{html.escape(display_amount)}</b>\n"
-                f"💰 Price: <b>{html.escape(price_text)}</b>\n\n"
-                f"💵 သင့် Balance: <b>{user_balance:,} MMK</b>\n\n"
-                "🆔 <b>Player ID</b> ထည့်ပါ။\n"
-                "ဥပမာ: <code>12345678</code>"
-            )
+        text = (
+            "💎 <b>Selected Product</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🌍 Server: <b>{html.escape(server)}</b>\n"
+            f"💎 Amount: <b>{html.escape(display_amount)}</b>\n"
+            f"🪙 MC Price: <b>{html.escape(price_text)}</b>\n\n"
+            f"🪙 သင့် Balance: <b>{user_balance:.3f} MC</b>\n\n"
+            "🆔 <b>Player ID</b> ထည့်ပါ။\n"
+            "ဥပမာ: <code>12345678</code>"
+        )
 
         context.user_data["state"] = "order_player_id"
         await query.edit_message_text(text, parse_mode="HTML")
@@ -1490,9 +1407,9 @@ async def handle_deposit_callback(update, context):
         await context.bot.send_message(
             chat_id=ADMIN_ID,
             text=(
-                f"💡 <b>Balance ဖြည့်ရန် Command</b>\n\n"
-                f"<code>/addbalance {user_id} 5000</code>\n\n"
-                f"(5000 နေရာမှာ ဖြည့်ချင်တဲ့ ငွေပမာဏ ထည့်ပါ)"
+                f"💡 <b>MC Balance ဖြည့်ရန် Command</b>\n\n"
+                f"<code>/addbalance {user_id} 300</code>\n\n"
+                f"(300 နေရာမှာ ဖြည့်ချင်တဲ့ MC ပမာဏ ထည့်ပါ)"
             ),
             parse_mode="HTML",
         )
@@ -1556,7 +1473,7 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"👤 Name: <b>{html.escape(user.first_name or '—')}</b>\n"
                 f"🔗 Username: @{user.username or '—'}\n"
                 f"🆔 User ID: <code>{user.id}</code>\n\n"
-                "⚠️ ဒီ Screenshot ကို စစ်ပြီး Balance ဖြည့်ပေးပါ။"
+                "⚠️ ဒီ Screenshot ကို စစ်ပြီး MC Balance ဖြည့်ပေးပါ။"
             ),
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[
@@ -1566,13 +1483,13 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(
             "✅ <b>Screenshot ရပါပြီ။</b>\n\n"
-            "Admin က စစ်ဆေးပြီး Balance ဖြည့်ပေးပါမယ်။\n"
+            "Admin က စစ်ဆေးပြီး MC Balance ဖြည့်ပေးပါမယ်။\n"
             "ခဏစောင့်ပါ။"
         )
     except Exception as e:
         print("DEPOSIT SEND ERROR:", e)
 
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
     if not await request_access(update, context):
@@ -1710,7 +1627,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "💎 MLBB Diamonds — Diamond Top-Up\n"
         "🔍 Check ML ID — Nickname စစ်ရန်\n"
-        "💰 My Balance — User Balance\n"
+        "💰 My Balance — User MC Balance\n"
         "💳 Deposit — ငွေဖြည့်ရန်\n"
         "📞 Contact Admin — Admin ဆီ စာပို့ရန်\n"
         "📊 Admin Panel — Admin Commands\n\n"
@@ -1724,14 +1641,14 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     args = context.args
     if len(args) != 2:
         await update.message.reply_text(
-            "❌ အသုံးပြုနည်း: <code>/addbalance USER_ID AMOUNT</code>\n"
-            "ဥပမာ: <code>/addbalance 7738726467 5000</code>",
+            "❌ အသုံးပြုနည်း: <code>/addbalance USER_ID MC_AMOUNT</code>\n"
+            "ဥပမာ: <code>/addbalance 7738726467 300</code>",
             parse_mode="HTML",
         )
         return
     try:
         user_id = int(args[0])
-        amount = int(args[1])
+        amount = float(args[1])
     except ValueError:
         await update.message.reply_text("❌ User ID နဲ့ Amount က နံပါတ် ဖြစ်ရပါမယ်။")
         return
@@ -1740,10 +1657,10 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     new_balance = get_user_balance(user_id)
 
     await update.message.reply_text(
-        f"✅ <b>Balance ဖြည့်ပြီးပါပြီ။</b>\n\n"
+        f"✅ <b>User MC Balance ဖြည့်ပြီးပါပြီ။</b>\n\n"
         f"🆔 User ID: <code>{user_id}</code>\n"
-        f"💰 ဖြည့်ငွေ: <b>{amount:,} MMK</b>\n"
-        f"💵 လက်ကျန်: <b>{new_balance:,} MMK</b>",
+        f"🪙 ဖြည့် MC: <b>{amount:.3f} MC</b>\n"
+        f"🪙 လက်ကျန်: <b>{new_balance:.3f} MC</b>",
         parse_mode="HTML",
     )
 
@@ -1751,16 +1668,10 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await context.bot.send_message(
             chat_id=user_id,
             text=(
-                f"✅ <b>Balance ဖြည့်ပြီးပါပြီ။</b>\n\n"
-                f"💰 ဖြည့်ငွေ: <b>{amount:,} MMK</b>\n"
-                f"💵 လက်ကျန်: <b>{new_balance:,} MMK</b>\n\n"
-                "🛒 <b>Service များ</b>\n"
-                "💎 MLBB Diamonds\n"
-                "🔍 Check ML ID\n"
-                "💰 My Balance\n"
-                "💳 Deposit\n"
-                "📞 Contact Admin\n\n"
-                "👇 အောက်က Button ကနေ ရွေးပါ။"
+                f"✅ <b>MC Balance ဖြည့်ပြီးပါပြီ။</b>\n\n"
+                f"🪙 ဖြည့် MC: <b>{amount:.3f} MC</b>\n"
+                f"🪙 လက်ကျန်: <b>{new_balance:.3f} MC</b>\n\n"
+                "အခု Diamond ဝယ်လို့ရပါပြီ။"
             ),
             parse_mode="HTML",
             reply_markup=main_keyboard(),
@@ -1783,9 +1694,9 @@ async def check_balance_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     balance = get_user_balance(user_id)
     await update.message.reply_text(
-        f"💰 <b>User Balance</b>\n\n"
+        f"💰 <b>User MC Balance</b>\n\n"
         f"🆔 User ID: <code>{user_id}</code>\n"
-        f"💵 Balance: <b>{balance:,} MMK</b>",
+        f"🪙 Balance: <b>{balance:.3f} MC</b>",
         parse_mode="HTML",
     )
 
@@ -1861,16 +1772,18 @@ async def check_subscription_command(update: Update, context: ContextTypes.DEFAU
         parse_mode="HTML",
     )
 
+# =========================================================
+# PRICE COMMANDS (MC Only)
+# =========================================================
 async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     args = context.args
-    if len(args) != 4:
+    if len(args) != 3:
         await update.message.reply_text(
-            "❌ အသုံးပြုနည်း: <code>/setprice SERVER AMOUNT MC USD</code>\n\n"
-            "ဥပမာ: <code>/setprice Global 5 1.660 0.09</code>\n"
-            "ဥပမာ: <code>/setprice Global 1.045 1.660 0.09</code>\n\n"
-            "💡 MMK ကို $ နဲ့ Auto တွက်ပါမယ်။",
+            "❌ အသုံးပြုနည်း: <code>/setprice SERVER AMOUNT MC</code>\n\n"
+            "ဥပမာ: <code>/setprice Global 5 1.660</code>\n"
+            "ဥပမာ: <code>/setprice Global weeklypass 26.815</code>",
             parse_mode="HTML",
         )
         return
@@ -1879,9 +1792,8 @@ async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     amount = args[1]
     try:
         mc_price = float(args[2])
-        usd_price = float(args[3])
     except ValueError:
-        await update.message.reply_text("❌ MC နဲ့ USD က နံပါတ် ဖြစ်ရပါမယ်။")
+        await update.message.reply_text("❌ MC က နံပါတ် ဖြစ်ရပါမယ်။")
         return
 
     valid_servers = ["Global", "Malaysia", "Singapore", "Turkey", "Philippines", "Brazil"]
@@ -1889,23 +1801,17 @@ async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Server မှားနေတယ်။ ရွေးနိုင်တာ: {', '.join(valid_servers)}")
         return
 
-    mmk_price = usd_price * USD_TO_MMK * PROFIT_MARGIN
-    if mmk_price < 100:
-        mmk_price = 100
-    mmk_price = round(mmk_price / 100) * 100
-    mmk_price = int(mmk_price)
+    set_manual_price(server, amount, mc_price)
 
-    set_manual_price(server, amount, mc_price, usd_price, mmk_price)
+    final_mc = mc_price * MC_PROFIT_MARGIN
 
     await update.message.reply_text(
         f"✅ <b>Price သတ်မှတ်ပြီးပါပြီ။</b>\n\n"
         f"🌍 Server: <b>{server}</b>\n"
         f"💎 Amount: <b>{amount}</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n"
-        f"💵 USD Price: <b>${usd_price:.3f}</b>\n"
-        f"💰 MMK Price: <b>{mmk_price:,} MMK</b>\n\n"
-        f"📐 <b>Formula:</b>\n"
-        f"${usd_price:.3f} × {USD_TO_MMK:,} × {PROFIT_MARGIN:.2f} = {mmk_price:,} MMK",
+        f"🪙 Base MC: <b>{mc_price:.3f} MC</b>\n"
+        f"💰 Final MC (20% profit): <b>{final_mc:.3f} MC</b>\n\n"
+        f"📐 <b>Formula:</b> {mc_price:.3f} × {MC_PROFIT_MARGIN:.2f} = {final_mc:.3f} MC",
         parse_mode="HTML",
     )
 
@@ -1944,13 +1850,14 @@ async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("📭 Price မရှိသေးပါ။")
         return
 
-    lines = ["💰 <b>Manual Prices</b>\n━━━━━━━━━━━━━━━━━━━━"]
+    lines = ["💰 <b>Manual MC Prices</b>\n━━━━━━━━━━━━━━━━━━━━"]
     current_server = None
-    for srv, amt, mc, usd, mmk in rows:
+    for srv, amt, mc in rows:
         if srv != current_server:
             lines.append(f"\n🌍 <b>{srv}</b>")
             current_server = srv
-        lines.append(f"  💎 {amt} → {mc:.3f} MC / ${usd:.3f} → <b>{mmk:,} MMK</b>")
+        final_mc = mc * MC_PROFIT_MARGIN
+        lines.append(f"  💎 {amt} → Base: {mc:.3f} MC → Final: <b>{final_mc:.3f} MC</b>")
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
@@ -1999,8 +1906,7 @@ def main():
 
     print("🤖 Eren's Diamond Bot is starting...")
     print("🧪 Sandbox:", MELO_SANDBOX)
-    print(f"💱 USD Rate: 1 USD = {USD_TO_MMK:,} MMK")
-    print(f"💹 Profit Margin: {PROFIT_MARGIN:.2f}x")
+    print(f"💹 MC Profit Margin: {MC_PROFIT_MARGIN:.2f}x")
     print(f"⚠️ MC Alert Threshold: {MC_ALERT_THRESHOLD} MC")
 
     app = (
@@ -2032,3 +1938,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
