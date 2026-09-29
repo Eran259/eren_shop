@@ -35,21 +35,18 @@ MELO_API_KEY = os.getenv("MELO_API_KEY", "")
 MELO_SECRET_KEY = os.getenv("MELO_SECRET_KEY", "")
 MELO_BASE_URL = "https://api.melostore.id"
 
-# Sandbox Mode (true/false)
 MELO_SANDBOX = os.getenv("MELO_SANDBOX", "true").lower() == "true"
 
-# License Key (သင့် Bot ကို ကာကွယ်ဖို့)
 LICENSE_KEY = os.getenv("LICENSE_KEY", "")
 LICENSE_SECRET = "EREN_SHOP_SECRET_2026"
 
 # =========================================================
 # PRICE CALCULATOR
 # =========================================================
-MMK_RATE = 0.2542 * 1.20  # 1 MC = ? MMK (20% အမြတ်)
-USD_TO_MMK = 4500           # 1 USDT = ? MMK
-PROFIT_MARGIN = 1.20        # 20% အမြတ်
+MMK_RATE = 0.2542 * 1.20
+USD_TO_MMK = 4500
+PROFIT_MARGIN = 1.20
 
-# MC Balance သတိပေးမည့် ပမာဏ
 MC_ALERT_THRESHOLD = 100
 
 # =========================================================
@@ -261,7 +258,130 @@ def set_user_api(user_id, api_key, secret_key):
     conn.close()
 
 # =========================================================
-# CUSTOMER MMK PRICE (Manual Override)
+# ACCESS REQUEST
+# =========================================================
+async def request_access(update, context, force_request=False):
+    user = update.effective_user
+    if not user:
+        return False
+    if user.id == ADMIN_ID:
+        return True
+
+    status = get_access_status(user.id)
+
+    if status is None or (force_request and status in ("pending", "rejected")):
+        save_access_request(user.id, user.username, user.first_name)
+        username = f"@{user.username}" if user.username else "—"
+        admin_text = (
+            "🔔 <b>NEW USER ACCESS REQUEST</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👤 Name: <b>{html.escape(user.first_name or '—')}</b>\n"
+            f"🔗 Username: <b>{html.escape(username)}</b>\n"
+            f"🆔 User ID: <code>{user.id}</code>\n\n"
+            "⚠️ ဒီ user ကို Bot အသုံးပြုခွင့်ပေးမလား?"
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=admin_text,
+                parse_mode="HTML",
+                reply_markup=access_request_keyboard(user.id),
+            )
+        except Exception as e:
+            print("ACCESS REQUEST SEND ERROR:", e)
+
+    if status == "rejected" and not force_request:
+        msg = "❌ <b>Access Denied</b>\n\nAdmin က ဒီ Bot ကိုအသုံးပြုခွင့် မပေးသေးပါ။\n\n/start နှိပ်ပြီး Request ပြန်ပို့နိုင်ပါတယ်။"
+        if update.message:
+            await update.message.reply_text(msg, parse_mode="HTML")
+        return False
+
+    if status == "pending":
+        msg = (
+            "⏳ <b>Access Pending</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "သင့် Request ကို Admin ဆီ ပို့ထားပါတယ်။\n"
+            "Approve ဖြစ်တဲ့အခါ Bot ကို အသုံးပြုနိုင်ပါမယ်။"
+        )
+        if update.message:
+            await update.message.reply_text(msg, parse_mode="HTML")
+        return False
+
+    if status == "approved":
+        if not is_subscription_active(user.id):
+            msg = (
+                "⚠️ <b>ငွေဆောင်ရန် လိုအပ်ပါတယ်။</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "သင့် Bot အသုံးပြုခွင့် သက်တမ်း ကုန်ဆုံးသွားပါပြီ။\n\n"
+                "💳 <b>လစဉ်ကြေး: 15,000 MMK</b>\n\n"
+                "📌 ငွေလွှဲရန်:\n"
+                "💙 K Pay: <code>09766605879</code> (TNS)\n"
+                "💛 AYA Pay: <code>09678664100</code> (HHS)\n"
+                "💚 UAB Pay: <code>09425160424</code> (TNS)\n\n"
+                "📸 ငွေလွှဲပြီးရင် Screenshot ကို ဒီ Chat မှာ ပို့ပါ။"
+            )
+            if update.message:
+                await update.message.reply_text(msg, parse_mode="HTML")
+            return False
+        return True
+
+    return False
+
+async def handle_access_callback(update, context):
+    query = update.callback_query
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("❌ Admin only", show_alert=True)
+        return True
+    parts = (query.data or "").split(":")
+    if len(parts) != 3:
+        await query.answer("Invalid request", show_alert=True)
+        return True
+    action, uid_text = parts[1], parts[2]
+    try:
+        user_id = int(uid_text)
+    except ValueError:
+        await query.answer("Invalid user ID", show_alert=True)
+        return True
+    if action == "approve":
+        status = "approved"
+    elif action == "reject":
+        status = "rejected"
+    else:
+        return True
+    set_access_status(user_id, status)
+    label = "✅ APPROVED" if status == "approved" else "❌ REJECTED"
+    try:
+        await query.edit_message_text(
+            (query.message.text or "") + f"\n\n<b>{label}</b>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    if status == "approved":
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="✅ <b>Access Approved!</b>\n\n✨ Eren's Diamond Bot ကို အခုအသုံးပြုနိုင်ပါပြီ။\n/start နှိပ်ပြီး စတင်ပါ။",
+                parse_mode="HTML",
+                reply_markup=main_keyboard(),
+            )
+        except Exception as e:
+            print("APPROVAL DM ERROR:", e)
+        await query.answer("User approved ✅")
+    else:
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="❌ <b>Access Denied</b>\n\nAdmin က ဒီ Bot ကိုအသုံးပြုခွင့် မပေးသေးပါ။",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            print("REJECTION DM ERROR:", e)
+        await query.answer("User rejected ❌")
+    return True
+
+# =========================================================
+# CUSTOMER MMK PRICE
 # =========================================================
 MMK_PRICES = {
     "Global": {},
@@ -286,7 +406,7 @@ PRODUCT_CACHE = {
     "Brazil": [],
 }
 LAST_PRODUCTS_LOAD = 0
-PRODUCT_CACHE_TTL = 300  # 5 မိနစ်
+PRODUCT_CACHE_TTL = 300
 PRODUCT_LOAD_LOCK = threading.Lock()
 PRODUCT_LAST_ERROR = {}
 
@@ -1410,9 +1530,6 @@ async def check_subscription_command(update: Update, context: ContextTypes.DEFAU
         parse_mode="HTML",
     )
 
-# =========================================================
-# ERROR HANDLER (Conflict Error ကို Handle လုပ်တယ်)
-# =========================================================
 async def error_handler(update, context):
     error = context.error
     print("BOT ERROR:", error)
