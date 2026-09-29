@@ -455,7 +455,7 @@ async def handle_access_callback(update, context):
     return True
 
 # =========================================================
-# CUSTOMER MMK PRICE
+# CUSTOMER MMK PRICE (Fallback)
 # =========================================================
 MMK_PRICES = {
     "Global": {},
@@ -805,14 +805,12 @@ def amount_keyboard(server, is_admin=False):
         display_amount = format_amount_for_display(amount)
 
         if is_admin:
-            # Admin ဆိုရင် MC + $ ပြပါ
             manual = get_manual_price(server, amount)
             if manual:
                 price_text = f"{manual['mc_price']:.3f} MC (${manual['usd_price']:.3f})"
             else:
                 price_text = "Price မသတ်မှတ်ရသေး"
         else:
-            # User ဆိုရင် MMK ပြပါ
             mmk_price = get_mmk_price(server, amount, product)
             if mmk_price is None:
                 price_text = "Price မသတ်မှတ်ရသေး"
@@ -1752,6 +1750,9 @@ async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
+# =========================================================
+# ERROR HANDLER
+# =========================================================
 async def error_handler(update, context):
     error = context.error
     print("BOT ERROR:", error)
