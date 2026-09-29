@@ -229,7 +229,43 @@ def validate_license_key(license_key):
         return None
 
 # =========================================================
-# ACCESS REQUEST
+# USER API KEY DATABASE
+# =========================================================
+USER_API_DB = "user_api.db"
+
+def init_user_api_db():
+    conn = sqlite3.connect(USER_API_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS user_api (
+        user_id INTEGER PRIMARY KEY,
+        api_key TEXT,
+        secret_key TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+    conn.commit()
+    conn.close()
+
+def get_user_api(user_id):
+    conn = sqlite3.connect(USER_API_DB)
+    row = conn.execute("SELECT api_key, secret_key FROM user_api WHERE user_id=?", (int(user_id),)).fetchone()
+    conn.close()
+    if row:
+        return {"api_key": row[0], "secret_key": row[1]}
+    return None
+
+def set_user_api(user_id, api_key, secret_key):
+    conn = sqlite3.connect(USER_API_DB)
+    conn.execute("""INSERT INTO user_api (user_id, api_key, secret_key, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+        api_key = ?,
+        secret_key = ?,
+        updated_at = CURRENT_TIMESTAMP
+    """, (int(user_id), api_key, secret_key, api_key, secret_key))
+    conn.commit()
+    conn.close()
+
+# =========================================================
+# ACCESS REQUEST (Subscription ကို နောက်မှ စစ်)
 # =========================================================
 async def request_access(update, context, force_request=False):
     user = update.effective_user
@@ -238,26 +274,10 @@ async def request_access(update, context, force_request=False):
     if user.id == ADMIN_ID:
         return True
 
-    # Subscription စစ်ပါ
-    if not is_subscription_active(user.id):
-        msg = (
-            "⚠️ <b>ငွေဆောင်ရန် လိုအပ်ပါတယ်။</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "သင့် Bot အသုံးပြုခွင့် သက်တမ်း ကုန်ဆုံးသွားပါပြီ။\n\n"
-            "💳 <b>လစဉ်ကြေး: 15,000 MMK</b>\n\n"
-            "📌 ငွေလွှဲရန်:\n"
-            "KBZ Pay: <code>09-XXXXXXXXX</code>\n"
-            "Wave Pay: <code>09-XXXXXXXXX</code>\n\n"
-            "📸 ငွေလွှဲပြီးရင် Screenshot ကို Admin ဆီ ပို့ပါ။"
-        )
-        if update.message:
-            await update.message.reply_text(msg, parse_mode="HTML")
-        return False
-
+    # Access Status ကို အရင်စစ်ပါ
     status = get_access_status(user.id)
-    if status == "approved":
-        return True
 
+    # Access မရသေးရင် Request ပို့ပါ
     if status is None or (force_request and status in ("pending", "rejected")):
         save_access_request(user.id, user.username, user.first_name)
         username = f"@{user.username}" if user.username else "—"
@@ -281,16 +301,40 @@ async def request_access(update, context, force_request=False):
 
     if status == "rejected" and not force_request:
         msg = "❌ <b>Access Denied</b>\n\nAdmin က ဒီ Bot ကိုအသုံးပြုခွင့် မပေးသေးပါ။\n\n/start နှိပ်ပြီး Request ပြန်ပို့နိုင်ပါတယ်။"
-    else:
+        if update.message:
+            await update.message.reply_text(msg, parse_mode="HTML")
+        return False
+
+    if status == "pending":
         msg = (
-            "🔐 <b>Access Approval Required</b>\n"
+            "⏳ <b>Access Pending</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "ဒီ Bot ကိုအသုံးပြုရန် Admin Approval လိုအပ်ပါတယ်။\n\n"
-            "⏳ Request ကို Admin ဆီပို့ထားပါတယ်။\n"
-            "Approve ဖြစ်တဲ့အခါ Bot ကိုအသုံးပြုနိုင်ပါမယ်။"
+            "သင့် Request ကို Admin ဆီ ပို့ထားပါတယ်။\n"
+            "Approve ဖြစ်တဲ့အခါ Bot ကို အသုံးပြုနိုင်ပါမယ်။"
         )
-    if update.message:
-        await update.message.reply_text(msg, parse_mode="HTML")
+        if update.message:
+            await update.message.reply_text(msg, parse_mode="HTML")
+        return False
+
+    # Access approved ဖြစ်ရင် Subscription စစ်ပါ
+    if status == "approved":
+        if not is_subscription_active(user.id):
+            msg = (
+                "⚠️ <b>ငွေဆောင်ရန် လိုအပ်ပါတယ်။</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "သင့် Bot အသုံးပြုခွင့် သက်တမ်း ကုန်ဆုံးသွားပါပြီ။\n\n"
+                "💳 <b>လစဉ်ကြေး: 15,000 MMK</b>\n\n"
+                "📌 ငွေလွှဲရန်:\n"
+                "💙 K Pay: <code>09766605879</code> (TNS)\n"
+                "💛 AYA Pay: <code>09678664100</code> (HHS)\n"
+                "💚 UAB Pay: <code>09425160424</code> (TNS)\n\n"
+                "📸 ငွေလွှဲပြီးရင် Screenshot ကို ဒီ Chat မှာ ပို့ပါ။"
+            )
+            if update.message:
+                await update.message.reply_text(msg, parse_mode="HTML")
+            return False
+        return True
+
     return False
 
 async def handle_access_callback(update, context):
@@ -349,8 +393,6 @@ async def handle_access_callback(update, context):
 # =========================================================
 # CUSTOMER MMK PRICE (Manual Override)
 # =========================================================
-# အကယ်၍ ဈေးကို ကိုယ်တိုင် သတ်မှတ်ချင်ရင် ဒီနေရာမှာ ထည့်ပါ။
-# မထည့်ရင် Auto Calculate (MMK_RATE) နဲ့ တွက်ပါမယ်။
 MMK_PRICES = {
     "Global": {},
     "Indonesia": {},
@@ -455,42 +497,6 @@ def get_profile(user_id=None):
 
 def get_balance(user_id=None):
     return api_get("/api/v1/h2h/profile/balance", user_id=user_id)
-
-# =========================================================
-# USER API KEY DATABASE
-# =========================================================
-USER_API_DB = "user_api.db"
-
-def init_user_api_db():
-    conn = sqlite3.connect(USER_API_DB)
-    conn.execute("""CREATE TABLE IF NOT EXISTS user_api (
-        user_id INTEGER PRIMARY KEY,
-        api_key TEXT,
-        secret_key TEXT,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )""")
-    conn.commit()
-    conn.close()
-
-def get_user_api(user_id):
-    conn = sqlite3.connect(USER_API_DB)
-    row = conn.execute("SELECT api_key, secret_key FROM user_api WHERE user_id=?", (int(user_id),)).fetchone()
-    conn.close()
-    if row:
-        return {"api_key": row[0], "secret_key": row[1]}
-    return None
-
-def set_user_api(user_id, api_key, secret_key):
-    conn = sqlite3.connect(USER_API_DB)
-    conn.execute("""INSERT INTO user_api (user_id, api_key, secret_key, updated_at)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(user_id) DO UPDATE SET
-        api_key = ?,
-        secret_key = ?,
-        updated_at = CURRENT_TIMESTAMP
-    """, (int(user_id), api_key, secret_key, api_key, secret_key))
-    conn.commit()
-    conn.close()
 
 # =========================================================
 # TEXT HELPERS
@@ -834,12 +840,15 @@ async def show_deposit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💳 <b>ငွေဖြည့်ရန် (Deposit)</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "📌 <b>ငွေလွှဲရန် နံပါတ်များ</b>\n\n"
-        "💙 <b>KBZ Pay</b>\n"
-        "<code>09-XXXXXXXXX</code>\n"
-        "👤 ဦးအောင်အောင်\n\n"
-        "💚 <b>Wave Pay</b>\n"
-        "<code>09-XXXXXXXXX</code>\n"
-        "👤 ဦးအောင်အောင်\n\n"
+        "💙 <b>K Pay</b>\n"
+        "<code>09766605879</code>\n"
+        "👤 TNS\n\n"
+        "💛 <b>AYA Pay</b>\n"
+        "<code>09678664100</code>\n"
+        "👤 HHS\n\n"
+        "💚 <b>UAB Pay</b>\n"
+        "<code>09425160424</code>\n"
+        "👤 TNS\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "📸 ငွေလွှဲပြီးရင် <b>Screenshot</b> ကို ဒီ Chat မှာ ပို့ပါ။\n"
         "Admin က စစ်ဆေးပြီး Balance ဖြည့်ပေးပါမယ်။"
@@ -853,7 +862,7 @@ async def open_mlbb(update: Update):
         "🌍 Server ရွေးပါ။",
         parse_mode="HTML",
         reply_markup=server_keyboard(),
-            )
+        )
 
 # =========================================================
 # CHECK ID FLOW
@@ -1096,22 +1105,23 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("❌ Invalid server", show_alert=True)
             return
 
-        # MC Balance စစ်ပါ
-        bal_data, bal_error = get_balance()
-        if not bal_error:
-            bal_info = bal_data.get("data", {})
-            current_mc = bal_info.get("h2h_balance", 0)
-            if current_mc < MC_ALERT_THRESHOLD:
-                await check_mc_balance_alert(context, current_mc)
-                await query.edit_message_text(
-                    "⚠️ <b>Out of Stock</b>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n\n"
-                    "လက်ရှိ Diamond ပမာဏ ကုန်ဆုံးနေပါတယ်။\n"
-                    "ခဏနေမှ ပြန်လာကြည့်ပါ။",
-                    parse_mode="HTML",
-                    reply_markup=server_keyboard(),
-                )
-                return
+        # Admin ဆိုရင် MC Balance မစစ်ဘူး
+        if query.from_user.id != ADMIN_ID:
+            bal_data, bal_error = get_balance()
+            if not bal_error:
+                bal_info = bal_data.get("data", {})
+                current_mc = bal_info.get("h2h_balance", 0)
+                if current_mc < MC_ALERT_THRESHOLD:
+                    await check_mc_balance_alert(context, current_mc)
+                    await query.edit_message_text(
+                        "⚠️ <b>Out of Stock</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━\n\n"
+                        "လက်ရှိ Diamond ပမာဏ ကုန်ဆုံးနေပါတယ်။\n"
+                        "ခဏနေမှ ပြန်လာကြည့်ပါ။",
+                        parse_mode="HTML",
+                        reply_markup=server_keyboard(),
+                    )
+                    return
 
         await query.edit_message_text("⏳ <b>Loading Diamond Products...</b>\nခဏစောင့်ပါ...", parse_mode="HTML")
         products, load_error = ensure_server_products(server)
