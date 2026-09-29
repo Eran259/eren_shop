@@ -50,10 +50,11 @@ USD_TO_MC = 17700
 
 MC_ALERT_THRESHOLD = 100
 
-# =========================================================
-# BOT ACCESS CONTROL
-# =========================================================
 ADMIN_ID = 5698123475
+
+# =========================================================
+# ACCESS DATABASE
+# =========================================================
 ACCESS_DB = "access.db"
 
 def init_access_db():
@@ -259,7 +260,7 @@ def set_user_api(user_id, api_key, secret_key):
     conn.close()
 
 # =========================================================
-# ACCESS REQUEST (New User Register Only)
+# ACCESS REQUEST
 # =========================================================
 async def request_access(update, context, force_request=False):
     user = update.effective_user
@@ -560,10 +561,13 @@ def _dedupe_products(products):
     return sorted(unique.values(), key=diamond_sort_key)
 
 # =========================================================
-# LOAD PRODUCTS FROM API
+# LOAD PRODUCTS FROM API (format=legacy)
 # =========================================================
 def load_server_products(server):
-    params = {"limit": 1000}
+    params = {
+        "limit": 1000,
+        "format": "legacy"  # <--- Legacy Format (price = USD)
+    }
     data, error = api_get("/api/v1/h2h/pricelists", params=params)
     if error:
         PRODUCT_LAST_ERROR[server] = error
@@ -638,9 +642,10 @@ def ensure_server_products(server):
     return products, PRODUCT_LAST_ERROR.get(server) if not products else None
 
 # =========================================================
-# PRICE CALCULATOR
+# PRICE CALCULATOR (USD -> MMK)
 # =========================================================
 def get_mmk_price(server, amount, product=None):
+    # Manual Price ရှိရင် အဲ့ဒါကို ယူပါ
     price = MMK_PRICES.get(server, {}).get(amount)
     if price is not None:
         try:
@@ -648,11 +653,13 @@ def get_mmk_price(server, amount, product=None):
         except Exception:
             return price
 
+    # မရှိရင် API ရဲ့ USD ဈေးကို MMK ပြောင်းပါ
     if product:
-        mc_price = product.get("price")
-        if mc_price is not None:
+        usd_price = product.get("price")  # <--- Legacy Format မှာ USD
+        if usd_price is not None:
             try:
-                price = float(mc_price) * MMK_RATE
+                # USD * USD_TO_MMK * PROFIT_MARGIN = MMK
+                price = float(usd_price) * USD_TO_MMK * PROFIT_MARGIN
                 if price < 100:
                     price = 100
                 price = round(price / 100) * 100
@@ -733,14 +740,16 @@ def amount_keyboard(server, is_admin=False):
         amount = product.get("amount", "?")
 
         if is_admin:
-            mc_price = product.get("price", 0)
+            # Admin ဆိုရင် USD ရော MC ရော ပြပါ
+            usd_price = product.get("price", 0)
             try:
-                mc_price = float(mc_price)
-                usd_price = mc_price / USD_TO_MC
-                price_text = f"{mc_price:.2f} MC (${usd_price:.3f})"
+                usd_price = float(usd_price)
+                mc_price = usd_price * USD_TO_MC
+                price_text = f"${usd_price:.3f} ({mc_price:.2f} MC)"
             except Exception:
                 price_text = "N/A"
         else:
+            # User ဆိုရင် MMK ဈေး ပြပါ
             mmk_price = get_mmk_price(server, amount, product)
             price_text = format_mmk(mmk_price)
 
@@ -1068,9 +1077,6 @@ async def process_order_zone_id(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data["state"] = "order_confirm"
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
-# =========================================================
-# CREATE TRANSACTION & CONFIRM
-# =========================================================
 def create_transaction(product, player_id, zone_id):
     sku = product.get("sku_code")
     buyer_trx_id = "EREN-" + uuid.uuid4().hex[:20].upper()
@@ -1100,10 +1106,7 @@ async def confirm_order(query, context):
     price = get_mmk_price(server, amount, product)
 
     if price is None:
-        await query.edit_message_text(
-            "⚠️ <b>Price မသတ်မှတ်ရသေးပါ။</b>",
-            parse_mode="HTML",
-        )
+        await query.edit_message_text("⚠️ <b>Price မသတ်မှတ်ရသေးပါ။</b>", parse_mode="HTML")
         context.user_data.clear()
         return
 
@@ -1154,7 +1157,7 @@ async def confirm_order(query, context):
     await query.edit_message_text(text, parse_mode="HTML")
     context.user_data.clear()
 
-    # =========================================================
+# =========================================================
 # CALLBACK HANDLERS
 # =========================================================
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1220,7 +1223,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "",
                 f"📦 {len(products)} Packages Available",
                 "",
-                "💡 <b>Format:</b> Amount • MC ($)",
+                "💡 <b>Format:</b> Amount • USD (MC)",
                 "",
                 "👇 အောက်က Button ကနေ Amount ရွေးပါ။",
             ]
@@ -1271,15 +1274,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_balance = get_user_balance(user_id)
 
         if user_id == ADMIN_ID:
-            mc_price = product.get("price", 0)
+            usd_price = product.get("price", 0)
             try:
-                mc_price = float(mc_price)
-                usd_price = mc_price / USD_TO_MC
-                mc_text = f"{mc_price:.3f} MC"
+                usd_price = float(usd_price)
+                mc_price = usd_price * USD_TO_MC
                 usd_text = f"${usd_price:.3f}"
+                mc_text = f"{mc_price:.3f} MC"
             except Exception:
-                mc_text = "N/A"
                 usd_text = "N/A"
+                mc_text = "N/A"
 
             text = (
                 "💎 <b>Selected Product</b> (Admin View)\n"
