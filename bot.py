@@ -1726,5 +1726,9 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     app.add_error_handler(error_handler)
 
-    print("✅ Bot is running!")
+        print("✅ Bot is running!")
+    app.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
   
