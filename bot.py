@@ -258,7 +258,7 @@ def set_user_api(user_id, api_key, secret_key):
     conn.close()
 
 # =========================================================
-# ACCESS REQUEST
+# ACCESS REQUEST (New User Register)
 # =========================================================
 async def request_access(update, context, force_request=False):
     user = update.effective_user
@@ -269,17 +269,20 @@ async def request_access(update, context, force_request=False):
 
     status = get_access_status(user.id)
 
+    # Status မရှိသေးရင် (သို့) force_request ဖြစ်ရင် Request ပို့ပါ
     if status is None or (force_request and status in ("pending", "rejected")):
         save_access_request(user.id, user.username, user.first_name)
         username = f"@{user.username}" if user.username else "—"
+
         admin_text = (
-            "🔔 <b>NEW USER ACCESS REQUEST</b>\n"
+            "🔔 <b>NEW USER REGISTER REQUEST</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             f"👤 Name: <b>{html.escape(user.first_name or '—')}</b>\n"
             f"🔗 Username: <b>{html.escape(username)}</b>\n"
             f"🆔 User ID: <code>{user.id}</code>\n\n"
             "⚠️ ဒီ user ကို Bot အသုံးပြုခွင့်ပေးမလား?"
         )
+
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -287,11 +290,16 @@ async def request_access(update, context, force_request=False):
                 parse_mode="HTML",
                 reply_markup=access_request_keyboard(user.id),
             )
+            print(f"✅ Register Request Sent: {user.id} ({user.first_name})")
         except Exception as e:
             print("ACCESS REQUEST SEND ERROR:", e)
 
     if status == "rejected" and not force_request:
-        msg = "❌ <b>Access Denied</b>\n\nAdmin က ဒီ Bot ကိုအသုံးပြုခွင့် မပေးသေးပါ။\n\n/start နှိပ်ပြီး Request ပြန်ပို့နိုင်ပါတယ်။"
+        msg = (
+            "❌ <b>Access Denied</b>\n\n"
+            "Admin က ဒီ Bot ကိုအသုံးပြုခွင့် မပေးသေးပါ။\n\n"
+            "/start နှိပ်ပြီး Request ပြန်ပို့နိုင်ပါတယ်။"
+        )
         if update.message:
             await update.message.reply_text(msg, parse_mode="HTML")
         return False
@@ -332,24 +340,30 @@ async def handle_access_callback(update, context):
     if query.from_user.id != ADMIN_ID:
         await query.answer("❌ Admin only", show_alert=True)
         return True
+
     parts = (query.data or "").split(":")
     if len(parts) != 3:
         await query.answer("Invalid request", show_alert=True)
         return True
+
     action, uid_text = parts[1], parts[2]
     try:
         user_id = int(uid_text)
     except ValueError:
         await query.answer("Invalid user ID", show_alert=True)
         return True
+
     if action == "approve":
         status = "approved"
+        label = "✅ APPROVED"
     elif action == "reject":
         status = "rejected"
+        label = "❌ REJECTED"
     else:
         return True
+
     set_access_status(user_id, status)
-    label = "✅ APPROVED" if status == "approved" else "❌ REJECTED"
+
     try:
         await query.edit_message_text(
             (query.message.text or "") + f"\n\n<b>{label}</b>",
@@ -357,13 +371,24 @@ async def handle_access_callback(update, context):
         )
     except Exception:
         pass
+
     if status == "approved":
         try:
             await context.bot.send_message(
                 chat_id=user_id,
-                text="✅ <b>Access Approved!</b>\n\n✨ Eren's Diamond Bot ကို အခုအသုံးပြုနိုင်ပါပြီ။\n/start နှိပ်ပြီး စတင်ပါ။",
+                text=(
+                    "✅ <b>Access Approved!</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "✨ Eren's Diamond Bot ကို အသုံးပြုခွင့် ရပါပြီ။\n\n"
+                    "💳 <b>လစဉ်ကြေး: 15,000 MMK</b>\n\n"
+                    "📌 ငွေလွှဲရန်:\n"
+                    "💙 K Pay: <code>09766605879</code> (TNS)\n"
+                    "💛 AYA Pay: <code>09678664100</code> (HHS)\n"
+                    "💚 UAB Pay: <code>09425160424</code> (TNS)\n\n"
+                    "📸 ငွေလွှဲပြီးရင် Screenshot ကို ဒီ Chat မှာ ပို့ပါ။\n"
+                    "/start နှိပ်ပြီး စတင်ပါ။"
+                ),
                 parse_mode="HTML",
-                reply_markup=main_keyboard(),
             )
         except Exception as e:
             print("APPROVAL DM ERROR:", e)
@@ -372,12 +397,17 @@ async def handle_access_callback(update, context):
         try:
             await context.bot.send_message(
                 chat_id=user_id,
-                text="❌ <b>Access Denied</b>\n\nAdmin က ဒီ Bot ကိုအသုံးပြုခွင့် မပေးသေးပါ။",
+                text=(
+                    "❌ <b>Access Denied</b>\n\n"
+                    "Admin က ဒီ Bot ကိုအသုံးပြုခွင့် မပေးသေးပါ။\n\n"
+                    "/start နှိပ်ပြီး Request ပြန်ပို့နိုင်ပါတယ်။"
+                ),
                 parse_mode="HTML",
             )
         except Exception as e:
             print("REJECTION DM ERROR:", e)
         await query.answer("User rejected ❌")
+
     return True
 
 # =========================================================
@@ -736,27 +766,96 @@ def amount_keyboard(server):
 # START & BASIC MENUS
 # =========================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await request_access(update, context, force_request=True):
-        return
     context.user_data.clear()
 
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
+    first_name = user.first_name or "User"
     balance = get_user_balance(user_id)
 
+    # Admin ဆိုရင် တိုက်ရိုက် Welcome ပြ
+    if user_id == ADMIN_ID:
+        text = (
+            f"✨ <b>Welcome, {html.escape(first_name)}!</b> ✨\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "💎 <b>Eren's Diamond Bot</b> မှ ကြိုဆိုပါတယ်။\n\n"
+            f"👑 <b>Status:</b> Admin\n"
+            f"💵 <b>Balance:</b> {balance:,} MMK\n\n"
+            "🛒 <b>Service များ</b>\n"
+            "💎 MLBB Diamonds\n"
+            "🔍 Check ML ID\n"
+            "💰 My Balance\n"
+            "💳 Deposit\n\n"
+            "⚡ Powered by Eren"
+        )
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
+        return
+
+    # Access Status စစ်ပါ
+    status = get_access_status(user_id)
+    sub_active = is_subscription_active(user_id)
+    sub = get_subscription(user_id)
+
+    # Status Text သတ်မှတ်ပါ
+    if status == "approved" and sub_active:
+        status_text = "✅ <b>Active</b>"
+        expiry_text = f"📅 Expiry: <b>{sub['expiry_date']}</b>"
+        footer = (
+            "🛒 <b>Service များ</b>\n"
+            "💎 MLBB Diamonds\n"
+            "🔍 Check ML ID\n"
+            "💰 My Balance\n"
+            "💳 Deposit"
+        )
+        show_keyboard = True
+    elif status == "approved" and not sub_active:
+        status_text = "⚠️ <b>Expired</b>"
+        expiry_text = "📅 <b>သက်တမ်းကုန်ဆုံးသွားပါပြီ။</b>"
+        footer = (
+            "💳 <b>လစဉ်ကြေး: 15,000 MMK</b>\n\n"
+            "📌 ငွေလွှဲရန်:\n"
+            "💙 K Pay: <code>09766605879</code> (TNS)\n"
+            "💛 AYA Pay: <code>09678664100</code> (HHS)\n"
+            "💚 UAB Pay: <code>09425160424</code> (TNS)\n\n"
+            "📸 ငွေလွှဲပြီးရင် Screenshot ကို ဒီ Chat မှာ ပို့ပါ။"
+        )
+        show_keyboard = False
+    elif status == "pending":
+        status_text = "⏳ <b>Pending</b>"
+        expiry_text = "⏳ Admin က စစ်ဆေးနေပါတယ်။"
+        footer = "ခဏစောင့်ပါ။ Admin Approve ဖြစ်တဲ့အခါ Bot ကို သုံးလို့ရပါမယ်။"
+        show_keyboard = False
+    elif status == "rejected":
+        status_text = "❌ <b>Rejected</b>"
+        expiry_text = "❌ Admin က ဒီ Bot ကို အသုံးပြုခွင့် မပေးပါ။"
+        footer = "/start နှိပ်ပြီး Request ပြန်ပို့နိုင်ပါတယ်။"
+        show_keyboard = False
+    else:
+        # Status မရှိသေးရင် Request ပို့ပါ
+        await request_access(update, context, force_request=True)
+
+        status_text = "⏳ <b>Pending Approval</b>"
+        expiry_text = "⏳ Admin ဆီ Request ပို့ထားပါတယ်။"
+        footer = "Approve ဖြစ်တဲ့အခါ Bot ကို သုံးလို့ရပါမယ်။"
+        show_keyboard = False
+
+    # Welcome Message ပြပါ
     text = (
-        "✨ <b>Eren's Diamond Bot</b> ✨\n"
+        f"✨ <b>Welcome, {html.escape(first_name)}!</b> ✨\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "💎 MLBB Diamond Top-Up\n\n"
-        f"💵 သင့် Balance: <b>{balance:,} MMK</b>\n\n"
-        "🛒 Choose your service:\n\n"
-        "💎 Diamonds\n"
-        "🔍 Check ML ID\n"
-        "💰 My Balance\n"
-        "💳 Deposit\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💎 <b>Eren's Diamond Bot</b>\n\n"
+        f"👤 <b>Status:</b> {status_text}\n"
+        f"{expiry_text}\n"
+        f"💵 <b>Balance:</b> {balance:,} MMK\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{footer}\n\n"
         "⚡ Powered by Eren"
     )
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
+
+    if show_keyboard:
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
+    else:
+        await update.message.reply_text(text, parse_mode="HTML")
 
 async def show_my_balance(update: Update):
     user_id = update.effective_user.id
