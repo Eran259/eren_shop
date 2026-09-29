@@ -784,10 +784,8 @@ def server_keyboard():
         ]
     )
 
-def amount_keyboard(server, is_admin=False):
+def amount_keyboard(server, is_admin=False, page=0, per_page=15):
     products = PRODUCT_CACHE.get(server, [])
-    buttons = []
-    row = []
     seen_amounts = set()
     unique_products = []
 
@@ -798,25 +796,34 @@ def amount_keyboard(server, is_admin=False):
         seen_amounts.add(amount)
         unique_products.append(product)
 
-    for index, product in enumerate(unique_products):
+    total = len(unique_products)
+    start = page * per_page
+    end = start + per_page
+    page_items = unique_products[start:end]
+
+    buttons = []
+    row = []
+
+    for index, product in enumerate(page_items):
         amount = product.get("amount", "?")
         display_amount = format_amount_for_display(amount)
 
         if is_admin:
             manual = get_manual_price(server, amount)
             if manual:
-                price_text = f"{manual['mc_price']:.3f} MC (${manual['usd_price']:.3f})"
+                price_text = f"{manual['mc_price']:.2f} MC (${manual['usd_price']:.2f})"
             else:
-                price_text = "Price မသတ်မှတ်ရသေး"
+                price_text = "No Price"
         else:
             mmk_price = get_mmk_price(server, amount, product)
             if mmk_price is None:
-                price_text = "Price မသတ်မှတ်ရသေး"
+                price_text = "No Price"
             else:
                 price_text = f"{mmk_price:,} MMK"
 
         button_text = f"💎 {display_amount} • {price_text}"
-        button = InlineKeyboardButton(button_text, callback_data=f"amount:{server}:{index}")
+        real_index = start + index
+        button = InlineKeyboardButton(button_text, callback_data=f"amount:{server}:{real_index}")
         row.append(button)
         if len(row) == 1:
             buttons.append(row)
@@ -824,6 +831,16 @@ def amount_keyboard(server, is_admin=False):
 
     if row:
         buttons.append(row)
+
+    # Pagination Buttons
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"page:{server}:{page-1}"))
+    if end < total:
+        nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"page:{server}:{page+1}"))
+    if nav_row:
+        buttons.append(nav_row)
+
     buttons.append([InlineKeyboardButton("⬅️ Server ပြန်ရွေးမယ်", callback_data="back:servers")])
     return InlineKeyboardMarkup(buttons)
 
@@ -1246,6 +1263,43 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if data.startswith("page:"):
+        parts = data.split(":")
+        if len(parts) != 3:
+            return
+        server = parts[1]
+        try:
+            page = int(parts[2])
+        except Exception:
+            return
+
+        is_admin = (query.from_user.id == ADMIN_ID)
+        total = len(PRODUCT_CACHE.get(server, []))
+
+        if is_admin:
+            header = (
+                f"💎 <b>{html.escape(server)} Server</b> (Admin View)\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📦 {total} Packages Available\n\n"
+                f"📄 Page {page + 1}\n\n"
+                "👇 အောက်က Button ကနေ Amount ရွေးပါ။"
+            )
+        else:
+            header = (
+                f"💎 <b>{html.escape(server)} Server</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📦 {total} Packages Available\n\n"
+                f"📄 Page {page + 1}\n\n"
+                "👇 အောက်က Button ကနေ Amount ရွေးပါ။"
+            )
+
+        await query.edit_message_text(
+            header,
+            parse_mode="HTML",
+            reply_markup=amount_keyboard(server, is_admin=is_admin, page=page),
+        )
+        return
+
     if data.startswith("server:"):
         server = data.split(":", 1)[1]
         if server not in PRODUCT_CACHE:
@@ -1284,34 +1338,29 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         is_admin = (query.from_user.id == ADMIN_ID)
+        total = len(products)
 
         if is_admin:
-            lines = [
-                f"💎 <b>{html.escape(server)} Server</b> (Admin View)",
-                "━━━━━━━━━━━━━━━━━━━━",
-                "",
-                f"📦 {len(products)} Packages Available",
-                "",
-                "💡 <b>Format:</b> Amount • MC ($)",
-                "",
-                "👇 အောက်က Button ကနေ Amount ရွေးပါ။",
-            ]
+            header = (
+                f"💎 <b>{html.escape(server)} Server</b> (Admin View)\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📦 {total} Packages Available\n\n"
+                "📄 Page 1\n\n"
+                "👇 အောက်က Button ကနေ Amount ရွေးပါ။"
+            )
         else:
-            lines = [
-                f"💎 <b>{html.escape(server)} Server</b>",
-                "━━━━━━━━━━━━━━━━━━━━",
-                "",
-                f"📦 {len(products)} Packages Available",
-                "",
-                "💡 <b>Format:</b> Amount • MMK",
-                "",
-                "👇 အောက်က Button ကနေ Amount ရွေးပါ။",
-            ]
+            header = (
+                f"💎 <b>{html.escape(server)} Server</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📦 {total} Packages Available\n\n"
+                "📄 Page 1\n\n"
+                "👇 အောက်က Button ကနေ Amount ရွေးပါ။"
+            )
 
         await query.edit_message_text(
-            "\n".join(lines),
+            header,
             parse_mode="HTML",
-            reply_markup=amount_keyboard(server, is_admin=is_admin),
+            reply_markup=amount_keyboard(server, is_admin=is_admin, page=0),
         )
         return
 
@@ -1381,6 +1430,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode="HTML")
         return
 
+
 async def handle_callback_actions(update, context):
     query = update.callback_query
     data = query.data or ""
@@ -1399,6 +1449,7 @@ async def handle_callback_actions(update, context):
         return True
 
     return False
+
 
 async def handle_deposit_callback(update, context):
     query = update.callback_query
@@ -1443,6 +1494,7 @@ async def handle_deposit_callback(update, context):
             print("REJECT DM ERROR:", e)
         await query.answer("Rejected ❌")
         return
+
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
