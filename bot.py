@@ -1725,6 +1725,82 @@ async def check_subscription_command(update: Update, context: ContextTypes.DEFAU
 # =========================================================
 # PRICE COMMANDS (Admin)
 # =========================================================
+async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    if len(args) != 4:
+        await update.message.reply_text(
+            "❌ အသုံးပြုနည်း: <code>/setprice SERVER AMOUNT MC USD</code>\n\n"
+            "ဥပမာ: <code>/setprice Global 5 1.660 0.09</code>\n"
+            "ဥပမာ: <code>/setprice Global 1.045 1.660 0.09</code>\n\n"
+            "💡 MMK ကို $ နဲ့ Auto တွက်ပါမယ်။",
+            parse_mode="HTML",
+        )
+        return
+
+    server = args[0]
+    amount = args[1]
+    try:
+        mc_price = float(args[2])
+        usd_price = float(args[3])
+    except ValueError:
+        await update.message.reply_text("❌ MC နဲ့ USD က နံပါတ် ဖြစ်ရပါမယ်။")
+        return
+
+    valid_servers = ["Global", "Indonesia", "Malaysia", "Singapore", "Turkey", "Philippines", "Brazil"]
+    if server not in valid_servers:
+        await update.message.reply_text(f"❌ Server မှားနေတယ်။ ရွေးနိုင်တာ: {', '.join(valid_servers)}")
+        return
+
+    mmk_price = usd_price * USD_TO_MMK * PROFIT_MARGIN
+    if mmk_price < 100:
+        mmk_price = 100
+    mmk_price = round(mmk_price / 100) * 100
+    mmk_price = int(mmk_price)
+
+    set_manual_price(server, amount, mc_price, usd_price, mmk_price)
+
+    await update.message.reply_text(
+        f"✅ <b>Price သတ်မှတ်ပြီးပါပြီ။</b>\n\n"
+        f"🌍 Server: <b>{server}</b>\n"
+        f"💎 Amount: <b>{amount}</b>\n"
+        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n"
+        f"💵 USD Price: <b>${usd_price:.3f}</b>\n"
+        f"💰 MMK Price: <b>{mmk_price:,} MMK</b>\n\n"
+        f"📐 <b>Formula:</b>\n"
+        f"${usd_price:.3f} × {USD_TO_MMK:,} × {PROFIT_MARGIN:.2f} = {mmk_price:,} MMK",
+        parse_mode="HTML",
+    )
+
+
+async def delete_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    if len(args) != 2:
+        await update.message.reply_text(
+            "❌ အသုံးပြုနည်း: <code>/delprice SERVER AMOUNT</code>\n"
+            "ဥပမာ: <code>/delprice Global 5</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    server = args[0]
+    amount = args[1]
+    delete_manual_price(server, amount)
+
+    await update.message.reply_text(
+        f"✅ <b>Price ဖျက်ပြီးပါပြီ။</b>\n\n"
+        f"🌍 Server: <b>{server}</b>\n"
+        f"💎 Amount: <b>{amount}</b>",
+        parse_mode="HTML",
+    )
+    
+    
+# =========================================================
+# PRICE COMMANDS (Admin)
+# =========================================================
 async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
