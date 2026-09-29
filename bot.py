@@ -43,9 +43,9 @@ LICENSE_SECRET = "EREN_SHOP_SECRET_2026"
 # =========================================================
 # PRICE CONFIG
 # =========================================================
-USD_TO_MMK = 4500           # 1 USD = 4,500 MMK
-PROFIT_MARGIN = 1.20        # 20% အမြတ်
-USD_TO_MC = 17700           # 1 USD = 17,700 MC
+USD_TO_MMK = 4500
+PROFIT_MARGIN = 1.20
+USD_TO_MC = 17700
 
 MC_ALERT_THRESHOLD = 100
 
@@ -259,7 +259,7 @@ def set_user_api(user_id, api_key, secret_key):
     conn.close()
 
 # =========================================================
-# MANUAL PRICE DATABASE (MC + USD)
+# MANUAL PRICE DATABASE
 # =========================================================
 MANUAL_PRICE_DB = "manual_price.db"
 
@@ -717,12 +717,10 @@ def ensure_server_products(server):
 # PRICE (Manual Only)
 # =========================================================
 def get_mmk_price(server, amount, product=None):
-    # Manual Price Database ကနေ ယူပါ
     manual = get_manual_price(server, amount)
     if manual:
         return int(manual["mmk_price"])
 
-    # Code ထဲက MMK_PRICES ကို ယူပါ (အကယ်၍ Database မှာ မရှိရင်)
     price = MMK_PRICES.get(server, {}).get(amount)
     if price is not None:
         try:
