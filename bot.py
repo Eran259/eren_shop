@@ -28,9 +28,6 @@ from telegram.ext import (
     filters,
 )
 
-# =========================================================
-# CONFIG
-# =========================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 MELO_API_KEY = os.getenv("MELO_API_KEY", "")
 MELO_SECRET_KEY = os.getenv("MELO_SECRET_KEY", "")
@@ -41,17 +38,11 @@ MELO_SANDBOX = os.getenv("MELO_SANDBOX", "true").lower() == "true"
 LICENSE_KEY = os.getenv("LICENSE_KEY", "")
 LICENSE_SECRET = "EREN_SHOP_SECRET_2026"
 
-# =========================================================
-# MC PRICE CONFIG
-# =========================================================
 MC_PROFIT_MARGIN = 1.20
 MC_ALERT_THRESHOLD = 100
 
 ADMIN_ID = 5698123475
 
-# =========================================================
-# DATABASE PATH (Railway Volume Support)
-# =========================================================
 DATA_DIR = os.getenv("DATA_DIR", "/data")
 if not os.path.exists(DATA_DIR):
     try:
@@ -80,6 +71,7 @@ def init_access_db():
     conn.commit()
     conn.close()
 
+
 def get_access_status(user_id):
     if int(user_id) == ADMIN_ID:
         return "approved"
@@ -87,6 +79,7 @@ def get_access_status(user_id):
     row = conn.execute("SELECT status FROM bot_access WHERE user_id=?", (int(user_id),)).fetchone()
     conn.close()
     return row[0] if row else None
+
 
 def save_access_request(user_id, username, first_name):
     conn = sqlite3.connect(ACCESS_DB)
@@ -102,11 +95,13 @@ def save_access_request(user_id, username, first_name):
     conn.commit()
     conn.close()
 
+
 def set_access_status(user_id, status):
     conn = sqlite3.connect(ACCESS_DB)
     conn.execute("UPDATE bot_access SET status=? WHERE user_id=?", (status, int(user_id)))
     conn.commit()
     conn.close()
+
 
 def access_request_keyboard(user_id):
     return InlineKeyboardMarkup([[
@@ -124,11 +119,13 @@ def init_balance_db():
     conn.commit()
     conn.close()
 
+
 def get_user_balance(user_id):
     conn = sqlite3.connect(USER_BALANCE_DB)
     row = conn.execute("SELECT balance FROM user_balance WHERE user_id=?", (int(user_id),)).fetchone()
     conn.close()
     return row[0] if row else 0.0
+
 
 def add_user_balance(user_id, amount):
     conn = sqlite3.connect(USER_BALANCE_DB)
@@ -140,6 +137,7 @@ def add_user_balance(user_id, amount):
     """, (int(user_id), float(amount), float(amount)))
     conn.commit()
     conn.close()
+
 
 def deduct_user_balance(user_id, amount):
     conn = sqlite3.connect(USER_BALANCE_DB)
@@ -162,6 +160,7 @@ def init_subscription_db():
     conn.commit()
     conn.close()
 
+
 def get_subscription(user_id):
     conn = sqlite3.connect(SUBSCRIPTION_DB)
     row = conn.execute("SELECT expiry_date, status FROM subscriptions WHERE user_id=?", (int(user_id),)).fetchone()
@@ -169,6 +168,7 @@ def get_subscription(user_id):
     if row:
         return {"expiry_date": row[0], "status": row[1]}
     return None
+
 
 def set_subscription(user_id, days=30):
     expiry = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
@@ -183,6 +183,7 @@ def set_subscription(user_id, days=30):
     conn.close()
     return expiry
 
+
 def is_subscription_active(user_id):
     sub = get_subscription(user_id)
     if not sub:
@@ -192,6 +193,28 @@ def is_subscription_active(user_id):
         return datetime.now() <= expiry and sub["status"] == "active"
     except Exception:
         return False
+
+
+def generate_license_key(user_id, expiry_date):
+    data = f"{user_id}|{expiry_date}"
+    signature = hmac.new(LICENSE_SECRET.encode(), data.encode(), hashlib.sha256).hexdigest()[:16]
+    key = base64.b64encode(f"{data}|{signature}".encode()).decode()
+    return key
+
+
+def validate_license_key(license_key):
+    try:
+        decoded = base64.b64decode(license_key).decode()
+        parts = decoded.split("|")
+        if len(parts) != 3:
+            return None
+        user_id, expiry_date, signature = parts
+        expected_sig = hmac.new(LICENSE_SECRET.encode(), f"{user_id}|{expiry_date}".encode(), hashlib.sha256).hexdigest()[:16]
+        if signature != expected_sig:
+            return None
+        return {"user_id": user_id, "expiry_date": expiry_date}
+    except Exception:
+        return None
 
 def init_user_api_db():
     conn = sqlite3.connect(USER_API_DB)
@@ -203,6 +226,16 @@ def init_user_api_db():
     )""")
     conn.commit()
     conn.close()
+
+
+def get_user_api(user_id):
+    conn = sqlite3.connect(USER_API_DB)
+    row = conn.execute("SELECT api_key, secret_key FROM user_api WHERE user_id=?", (int(user_id),)).fetchone()
+    conn.close()
+    if row:
+        return {"api_key": row[0], "secret_key": row[1]}
+    return None
+
 
 def init_manual_price_db():
     conn = sqlite3.connect(MANUAL_PRICE_DB)
@@ -217,6 +250,7 @@ def init_manual_price_db():
     conn.commit()
     conn.close()
 
+
 def get_manual_price(server, amount):
     conn = sqlite3.connect(MANUAL_PRICE_DB)
     row = conn.execute("SELECT mc_price FROM manual_price WHERE server=? AND amount=?", (server, amount)).fetchone()
@@ -224,6 +258,7 @@ def get_manual_price(server, amount):
     if row:
         return {"mc_price": row[0]}
     return None
+
 
 def set_manual_price(server, amount, mc_price):
     conn = sqlite3.connect(MANUAL_PRICE_DB)
@@ -236,6 +271,7 @@ def set_manual_price(server, amount, mc_price):
     conn.commit()
     conn.close()
 
+
 def get_all_manual_prices(server=None):
     conn = sqlite3.connect(MANUAL_PRICE_DB)
     if server:
@@ -245,10 +281,12 @@ def get_all_manual_prices(server=None):
     conn.close()
     return rows
 
+
 def delete_manual_price(server, amount):
     conn = sqlite3.connect(MANUAL_PRICE_DB)
     conn.execute("DELETE FROM manual_price WHERE server=? AND amount=?", (server, amount))
     conn.commit()
+    conn.close()
 
 def init_manual_product_db():
     conn = sqlite3.connect(MANUAL_PRODUCT_DB)
@@ -263,6 +301,7 @@ def init_manual_product_db():
     )""")
     conn.commit()
     conn.close()
+
 
 def add_manual_product(server, amount, sku_code, display_name=None):
     conn = sqlite3.connect(MANUAL_PRODUCT_DB)
@@ -282,6 +321,7 @@ def add_manual_product(server, amount, sku_code, display_name=None):
     finally:
         conn.close()
 
+
 def delete_manual_product(server, amount):
     conn = sqlite3.connect(MANUAL_PRODUCT_DB)
     conn.execute("DELETE FROM manual_product WHERE server=? AND amount=?", (server, amount))
@@ -289,6 +329,7 @@ def delete_manual_product(server, amount):
     conn.commit()
     conn.close()
     return affected > 0
+
 
 def get_all_manual_products(server=None):
     conn = sqlite3.connect(MANUAL_PRODUCT_DB)
@@ -298,6 +339,7 @@ def get_all_manual_products(server=None):
         rows = conn.execute("SELECT server, amount, sku_code, display_name FROM manual_product ORDER BY server, amount").fetchall()
     conn.close()
     return rows
+
 
 def get_manual_products_for_server(server):
     conn = sqlite3.connect(MANUAL_PRODUCT_DB)
@@ -315,9 +357,6 @@ def get_manual_products_for_server(server):
             "price": 999999999,
         })
     return products
-
-    
-    conn.close()
 
 async def request_access(update, context, force_request=False):
     user = update.effective_user
@@ -474,15 +513,6 @@ def api_headers(user_id=None):
         "X-API-Key": MELO_API_KEY,
         "X-Secret-Key": MELO_SECRET_KEY,
     }
-
-
-def get_user_api(user_id):
-    conn = sqlite3.connect(USER_API_DB)
-    row = conn.execute("SELECT api_key, secret_key FROM user_api WHERE user_id=?", (int(user_id),)).fetchone()
-    conn.close()
-    if row:
-        return {"api_key": row[0], "secret_key": row[1]}
-    return None
 
 
 def api_get(path, params=None, user_id=None, retries=3):
@@ -2062,6 +2092,7 @@ async def list_products_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
+
 async def error_handler(update, context):
     error = context.error
     print("BOT ERROR:", error)
@@ -2164,3 +2195,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
