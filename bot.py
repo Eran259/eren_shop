@@ -297,7 +297,7 @@ def delete_manual_price(server, amount):
     conn.commit()
     conn.close()
 
-async def request_access(update, context, force_request=False):
+    async def request_access(update, context, force_request=False):
     user = update.effective_user
     if not user:
         return False
@@ -622,10 +622,18 @@ def load_server_products(server):
                 amount = re.sub(r"(?i)\bdiamonds?\b", "", clean_name)
                 amount = amount.replace(" ", "").strip() or "unknown"
 
+        # ဈေး (price) ကို ယူပါ
+        price = product.get("price", 999999999)
+        try:
+            price = float(price)
+        except Exception:
+            price = 999999999
+
         item = dict(product)
         item["server"] = server
         item["amount"] = amount
         item["sku_code"] = sku
+        item["price"] = price
         products.append(item)
 
     print(f"✅ Filtered {len(products)} MLBB products for {server}")
@@ -721,15 +729,23 @@ def server_keyboard():
 
 
 def get_unique_products(server):
+    """
+    Product list ကို amount အလိုက် unique ဖြစ်အောင် filter လုပ်ပါ
+    ✅ ဈေးအသက်သာဆုံး Server ကို ရွေးပါ
+    """
     products = PRODUCT_CACHE.get(server, [])
-    seen_amounts = set()
-    unique_products = []
+    amount_groups = defaultdict(list)
+
     for product in products:
         amount = product.get("amount", "?")
-        if amount in seen_amounts:
-            continue
-        seen_amounts.add(amount)
-        unique_products.append(product)
+        amount_groups[amount].append(product)
+
+    unique_products = []
+    for amount, group in amount_groups.items():
+        # ဈေးအသက်သာဆုံး (price အနည်းဆုံး) ကို ရွေးပါ
+        cheapest = min(group, key=lambda p: p.get("price", 999999999))
+        unique_products.append(cheapest)
+
     return unique_products
 
 
@@ -2010,4 +2026,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
