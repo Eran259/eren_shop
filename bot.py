@@ -30,9 +30,6 @@ from telegram.ext import (
     filters,
 )
 
-# =========================================================
-# CONFIG
-# =========================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 MELO_API_KEY = os.getenv("MELO_API_KEY", "")
 MELO_SECRET_KEY = os.getenv("MELO_SECRET_KEY", "")
@@ -43,14 +40,14 @@ MELO_SANDBOX = os.getenv("MELO_SANDBOX", "true").lower() == "true"
 LICENSE_KEY = os.getenv("LICENSE_KEY", "")
 LICENSE_SECRET = "EREN_SHOP_SECRET_2026"
 
-MC_PROFIT_MARGIN = 1.20
+MC_PROFIT_MARGIN = 1.0058
 MC_ALERT_THRESHOLD = 100
+
+MC_PER_USD = 17.98786
+KS_PER_USD = 4450
 
 ADMIN_ID = 5698123475
 
-# =========================================================
-# DATABASE PATH
-# =========================================================
 DATA_DIR = os.getenv("DATA_DIR", "/data")
 if not os.path.exists(DATA_DIR):
     try:
@@ -66,6 +63,10 @@ MANUAL_PRICE_DB = os.path.join(DATA_DIR, "manual_price.db")
 MANUAL_PRODUCT_DB = os.path.join(DATA_DIR, "manual_product.db")
 
 print(f"📁 DATA_DIR: {DATA_DIR}")
+
+
+def mc_to_ks(mc_amount):
+    return mc_amount * (KS_PER_USD / MC_PER_USD)
 
 def init_access_db():
     conn = sqlite3.connect(ACCESS_DB)
@@ -975,31 +976,41 @@ async def show_my_balance(update: Update):
             info = data.get("data", {})
             mc_balance = info.get("h2h_balance", 0)
             usd = info.get("h2h_balance_usd", 0)
+            user_ks = mc_to_ks(user_balance)
+            mc_ks = mc_to_ks(mc_balance)
             text = (
                 "💰 <b>Balance</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"🪙 <b>User Balance (Your MC)</b>\n"
-                f"<b>{user_balance:.3f} MC</b>\n\n"
+                f"<b>{user_balance:.3f} MC</b>\n"
+                f"💵 ≈ <b>{user_ks:,.0f} Ks</b>\n\n"
                 f"🪙 <b>Melostore MC Balance</b>\n"
-                f"<b>{mc_balance:,.2f} MC</b>\n\n"
+                f"<b>{mc_balance:,.2f} MC</b>\n"
+                f"💵 ≈ <b>{mc_ks:,.0f} Ks</b>\n\n"
                 f"💵 USD Value\n"
                 f"<b>${usd:,.2f}</b>\n\n"
+                "⚠️ <i>Ks Rate သည် အပြောင်းလဲရှိနိုင်ပါသည်။</i>\n\n"
                 "💳 ငွေဖြည့်ချင်ရင် <b>Deposit</b> ကို နှိပ်ပါ။"
             )
         else:
+            user_ks = mc_to_ks(user_balance)
             text = (
                 "💰 <b>Balance</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"🪙 <b>User Balance (Your MC)</b>\n"
-                f"<b>{user_balance:.3f} MC</b>\n\n"
+                f"<b>{user_balance:.3f} MC</b>\n"
+                f"💵 ≈ <b>{user_ks:,.0f} Ks</b>\n\n"
                 f"🪙 <b>Melostore MC Balance</b>\n"
                 f"<i>Error: {html.escape(str(error)[:50])}</i>"
             )
     else:
+        ks_balance = mc_to_ks(user_balance)
         text = (
             "💰 <b>သင့်ရဲ့ Balance</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🪙 Balance: <b>{user_balance:.3f} MC</b>\n\n"
+            f"🪙 Balance: <b>{user_balance:.3f} MC</b>\n"
+            f"💵 ≈ <b>{ks_balance:,.0f} Ks</b>\n\n"
+            "⚠️ <i>Ks Rate သည် အပြောင်းလဲရှိနိုင်ပါသည်။</i>\n\n"
             "💳 ငွေဖြည့်ချင်ရင် <b>Deposit</b> ကို နှိပ်ပါ။"
         )
 
@@ -1061,6 +1072,7 @@ async def show_deposit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>09425160424</code>\n"
         "👤 TNS\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "⚠️ <b>အနည်းဆုံး 100 MC (≈ 25,000 Ks) ဖြည့်ပါ။</b>\n\n"
         "📸 ငွေလွှဲပြီးရင် <b>Screenshot</b> ကို ဒီ Chat မှာ ပို့ပါ။\n"
         "Admin က စစ်ဆေးပြီး MC Balance ဖြည့်ပေးပါမယ်။"
     )
@@ -1875,7 +1887,7 @@ async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Backup ZIP ဖိုင်ကို ဒီ Chat မှာ ပို့ပါ။\n"
         "Bot က Auto Restore လုပ်ပါမယ်။",
         parse_mode="HTML",
-    )
+        )
 
 async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -1939,10 +1951,12 @@ async def check_balance_command(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     balance = get_user_balance(user_id)
+    ks_balance = mc_to_ks(balance)
     await update.message.reply_text(
         f"💰 <b>User MC Balance</b>\n\n"
         f"🆔 User ID: <code>{user_id}</code>\n"
-        f"🪙 Balance: <b>{balance:.3f} MC</b>",
+        f"🪙 Balance: <b>{balance:.3f} MC</b>\n"
+        f"💵 ≈ <b>{ks_balance:,.0f} Ks</b>",
         parse_mode="HTML",
     )
 
@@ -2061,8 +2075,8 @@ async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🌍 Server: <b>{server}</b>\n"
         f"💎 Amount: <b>{amount}</b>\n"
         f"🪙 Base MC: <b>{mc_price:.3f} MC</b>\n"
-        f"💰 Final MC (20% profit): <b>{final_mc:.3f} MC</b>\n\n"
-        f"📐 <b>Formula:</b> {mc_price:.3f} × {MC_PROFIT_MARGIN:.2f} = {final_mc:.3f} MC",
+        f"💰 Final MC: <b>{final_mc:.3f} MC</b>\n\n"
+        f"📐 <b>Formula:</b> {mc_price:.3f} × {MC_PROFIT_MARGIN:.4f} = {final_mc:.3f} MC",
         parse_mode="HTML",
     )
 
@@ -2219,6 +2233,8 @@ async def error_handler(update, context):
 async def post_init(application: Application):
     print("✅ Bot initialized successfully!")
     print(f"📁 Data Directory: {DATA_DIR}")
+    print(f"💹 MC Profit Margin: {MC_PROFIT_MARGIN}")
+    print(f"💵 KS Rate: {KS_PER_USD} Ks/$")
 
 
 async def post_shutdown(application: Application):
@@ -2259,9 +2275,10 @@ def main():
 
     print("🤖 Eren's Diamond Bot is starting...")
     print("🧪 Sandbox:", MELO_SANDBOX)
-    print(f"💹 MC Profit Margin: {MC_PROFIT_MARGIN:.2f}x")
+    print(f"💹 MC Profit Margin: {MC_PROFIT_MARGIN:.4f}x")
     print(f"⚠️ MC Alert Threshold: {MC_ALERT_THRESHOLD} MC")
     print(f"📁 Data Directory: {DATA_DIR}")
+    print(f"💵 KS Rate: {KS_PER_USD} Ks/$")
 
     app = (
         Application.builder()
@@ -2298,3 +2315,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
