@@ -602,30 +602,25 @@ def load_server_products(server):
         if product_server != server:
             continue
 
-        # ✅ Product Name ကနေ amount ဆွဲထုတ် (ဦးစားပေး)
+        # ✅ Product Name ကနေ amount ဆွဲထုတ် (အားလုံး ပါအောင်)
         sku = str(product.get("sku_code", ""))
         name = str(product.get("name", ""))
+        clean_name = re.sub(r"(?i)^mobile\s*legends?\s*", "", name).strip()
 
-        # Double Diamond (50+50, 156+16) ကို အရင်စစ်
-        dd_match = re.search(r"(\d+)\s*\+\s*(\d+)\s*Diamonds?", name, re.IGNORECASE)
+        # 1. Double Diamond (50+50, 156+16) — Space ပါလည်း ဖမ်း
+        dd_match = re.search(r"(\d+)\s*\+\s*(\d+)", clean_name)
         if dd_match:
             a, b = dd_match.group(1), dd_match.group(2)
             amount = f"{a}+{b}"
         else:
-            # Name ကနေ ရိုးရိုး နံပါတ် ဆွဲထုတ် (86 Diamonds → 86)
-            name_match = re.search(r"(\d+)\s*Diamonds?", name, re.IGNORECASE)
-            if name_match:
-                amount = name_match.group(1)
+            # 2. ရိုးရိုး နံပါတ် (86 Diamonds → 86)
+            num_match = re.search(r"(\d+)", clean_name)
+            if num_match:
+                amount = num_match.group(1)
             else:
-                # SKU ရဲ့ အဆုံးက နံပါတ်ကို ဆွဲထုတ်
-                sku_match = re.search(r"(\d+)$", sku)
-                if sku_match:
-                    amount = sku_match.group(1)
-                else:
-                    # Weekly Pass, Twilight Pass လိုမျိုး
-                    amount = re.sub(r"(?i)\bmobile\s*legends?\b", "", name)
-                    amount = re.sub(r"(?i)\bdiamonds?\b", "", amount)
-                    amount = amount.replace(" ", "").strip() or "unknown"
+                # 3. Weekly Pass, Twilight Pass လိုမျိုး
+                amount = re.sub(r"(?i)\bdiamonds?\b", "", clean_name)
+                amount = amount.replace(" ", "").strip() or "unknown"
 
         item = dict(product)
         item["server"] = server
@@ -1854,7 +1849,8 @@ async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "❌ အသုံးပြုနည်း: <code>/setprice SERVER AMOUNT MC</code>\n\n"
             "ဥပမာ: <code>/setprice Global 86 1.660</code>\n"
-            "ဥပမာ: <code>/setprice Global 50+50 13.865</code>",
+            "ဥပမာ: <code>/setprice Global 50+50 13.865</code>\n"
+            "ဥပမာ: <code>/setprice Global WeeklyPass 32.212</code>",
             parse_mode="HTML",
         )
         return
@@ -2014,3 +2010,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
