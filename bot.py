@@ -855,11 +855,7 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=15):
     buttons.append([InlineKeyboardButton("⬅️ Server ပြန်ရွေးမယ်", callback_data="back:servers")])
     return InlineKeyboardMarkup(buttons)
 
-    
-
-    
-
-    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
     user = update.effective_user
@@ -968,7 +964,6 @@ async def show_my_balance(update: Update):
         )
 
     await update.message.reply_text(text, parse_mode="HTML")
-
 
 async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
