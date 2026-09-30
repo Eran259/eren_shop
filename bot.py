@@ -20,6 +20,7 @@ from telegram import (
     ReplyKeyboardMarkup,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    BotCommand,
 )
 from telegram.ext import (
     Application,
@@ -244,7 +245,6 @@ def get_user_api(user_id):
     if row:
         return {"api_key": row[0], "secret_key": row[1]}
     return None
-
 
 def init_manual_price_db():
     conn = sqlite3.connect(MANUAL_PRICE_DB)
@@ -631,7 +631,6 @@ def get_profile(user_id=None):
 def get_balance(user_id=None):
     return api_get("/api/v1/h2h/profile/balance", user_id=user_id)
 
-
 def format_amount_for_display(amount):
     try:
         if "." in str(amount):
@@ -662,6 +661,15 @@ def format_mc(price):
         return f"{float(price):.3f} MC"
     except Exception:
         return f"{price} MC"
+
+
+def get_mc_price(server, amount, product=None):
+    manual = get_manual_price(server, amount)
+    if manual:
+        base_mc = manual["mc_price"]
+        final_mc = base_mc * MC_PROFIT_MARGIN
+        return round(final_mc, 3)
+    return None
 
 def load_server_products(server):
     params = {"limit": 1000}
@@ -788,15 +796,6 @@ def ensure_server_products(server):
     return products, PRODUCT_LAST_ERROR.get(server) if not products else None
 
 
-def get_mc_price(server, amount, product=None):
-    manual = get_manual_price(server, amount)
-    if manual:
-        base_mc = manual["mc_price"]
-        final_mc = base_mc * MC_PROFIT_MARGIN
-        return round(final_mc, 3)
-    return None
-
-
 async def check_mc_balance_alert(context, current_mc):
     if current_mc < MC_ALERT_THRESHOLD:
         try:
@@ -817,12 +816,11 @@ async def check_mc_balance_alert(context, current_mc):
 def main_keyboard():
     return ReplyKeyboardMarkup(
         [
-            ["💎 MLBB Diamonds", "🔍 Check ML ID"],
-            ["💰 My Balance", "💳 Deposit"],
-            ["📞 Contact Admin", "📊 Admin Panel"],
+            ["📞 Contact Admin", "⚙️ Admin Panel"],
             ["🔌 API Status"],
         ],
         resize_keyboard=True,
+        is_persistent=True,
     )
 
 
@@ -854,7 +852,7 @@ def get_unique_products(server):
     return unique_products
 
 
-def amount_keyboard(server, is_admin=False, page=0, per_page=15):
+def amount_keyboard(server, is_admin=False, page=0, per_page=11):
     unique_products = get_unique_products(server)
     total = len(unique_products)
     start = page * per_page
@@ -1111,6 +1109,31 @@ async def show_api_status(update: Update):
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
+
+# ✅ Command Function အသစ် (Menu အတွက်)
+async def products_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await request_access(update, context):
+        return
+    await open_mlbb(update)
+
+
+async def idcheck_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await request_access(update, context):
+        return
+    await start_check_id(update, context)
+
+
+async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await request_access(update, context):
+        return
+    await show_my_balance(update)
+
+
+async def deposit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await request_access(update, context):
+        return
+    await show_deposit_menu(update, context)
+
 async def start_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["state"] = "check_id_player"
@@ -1365,6 +1388,97 @@ async def confirm_order(query, context):
         print("ORDER ALARM ERROR:", e)
 
     context.user_data.clear()
+
+
+# ✅ .ml Command Function
+async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ .ml PLAYER_ID ZONE_ID AMOUNT  သို့  .ml PLAYER_ID ZONE_ID SERVER AMOUNT """
+    args = context.args
+
+    if len(args) < 3:
+        await update.message.reply_text(
+            "❌ <b>အသုံးပြုနည်း</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "<code>.ml PLAYER_ID ZONE_ID AMOUNT</code>\n"
+            "<code>.ml PLAYER_ID ZONE_ID SERVER AMOUNT</code>\n\n"
+            "<b>ဥပမာ:</b>\n"
+            "<code>.ml 12345678 2039 wp</code>\n"
+            "<code>.ml 12345678 2039 global wp</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    player_id = args[0]
+    zone_id = args[1]
+    amount = args[2]
+    server = "Global"
+
+    if len(args) >= 4:
+        server = args[2].capitalize()
+        amount = args[3]
+
+    # Product ရှာမယ်
+    products = get_unique_products(server)
+    product = None
+    for p in products:
+        if str(p.get("amount")).lower() == amount.lower():
+            product = p
+            break
+
+    if not product:
+        await update.message.reply_text(
+            f"❌ <b>{html.escape(amount)}</b> Diamonds မတွေ့ပါ။\n\n"
+            f"🌍 Server: <b>{html.escape(server)}</b>",
+            parse_mode="HTML",
+        )
+        return
+
+    context.user_data["server"] = server
+    context.user_data["product"] = product
+    context.user_data["player_id"] = player_id
+    context.user_data["zone_id"] = zone_id
+
+    # Nickname စစ်မယ်
+    await update.message.reply_text("🔍 <b>Checking Nickname...</b>\nခဏစောင့်ပါ...", parse_mode="HTML")
+    data, error = check_ml_nickname(player_id, zone_id)
+    if error:
+        await update.message.reply_text(
+            f"❌ <b>ID Check Failed</b>\n\n{html.escape(str(error))}",
+            parse_mode="HTML",
+        )
+        return
+
+    info = data.get("data", {})
+    nickname = info.get("username") or info.get("nickname") or info.get("name") or "-"
+    context.user_data["nickname"] = nickname
+
+    mc_price = get_mc_price(server, amount, product)
+    display_amount = format_amount_for_display(amount)
+    price_text = format_mc(mc_price)
+
+    user_id = update.effective_user.id
+    user_balance = get_user_balance(user_id)
+
+    text = (
+        "🔍 <b>Account Verified</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
+        f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
+        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
+        f"🌍 Server: <b>{html.escape(server)}</b>\n"
+        f"💎 Diamond: <b>{html.escape(display_amount)}</b>\n"
+        f"🪙 MC Price: <b>{html.escape(price_text)}</b>\n\n"
+        f"🪙 သင့် Balance: <b>{user_balance:.3f} MC</b>"
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Confirm Order", callback_data="order:confirm"),
+            InlineKeyboardButton("❌ Cancel", callback_data="order:cancel"),
+        ]
+    ])
+    context.user_data["state"] = "order_confirm"
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1706,18 +1820,25 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text.strip()
 
-    if text == "💎 MLBB Diamonds":
-        await open_mlbb(update)
+    # ✅ .ml Command ဖမ်း
+    if text.lower().startswith(".ml "):
+        parts = text.split()
+        if len(parts) < 4:
+            await update.message.reply_text(
+                "❌ <b>အသုံးပြုနည်း</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "<code>.ml PLAYER_ID ZONE_ID AMOUNT</code>\n"
+                "<code>.ml PLAYER_ID ZONE_ID SERVER AMOUNT</code>\n\n"
+                "<b>ဥပမာ:</b>\n"
+                "<code>.ml 12345678 2039 wp</code>\n"
+                "<code>.ml 12345678 2039 global wp</code>",
+                parse_mode="HTML",
+            )
+            return
+        context.args = parts[1:]
+        await ml_command(update, context)
         return
-    if text == "🔍 Check ML ID":
-        await start_check_id(update, context)
-        return
-    if text == "💰 My Balance":
-        await show_my_balance(update)
-        return
-    if text == "💳 Deposit":
-        await show_deposit_menu(update, context)
-        return
+
     if text == "📞 Contact Admin":
         context.user_data["state"] = "contact_admin"
         await update.message.reply_text(
@@ -1728,7 +1849,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
         )
         return
-    if text == "📊 Admin Panel":
+    if text == "⚙️ Admin Panel":
         await show_admin_panel(update, context)
         return
     if text == "🔌 API Status":
@@ -1831,20 +1952,21 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("❓ Menu ကနေရွေးပေးပါ။", reply_markup=main_keyboard())
 
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await request_access(update, context):
         return
     text = (
         "📖 <b>Help</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "💎 MLBB Diamonds — Diamond Top-Up\n"
-        "🔍 Check ML ID — Nickname စစ်ရန်\n"
-        "💰 My Balance — User MC Balance\n"
-        "💳 Deposit — ငွေဖြည့်ရန်\n"
+        "/start — Main Menu\n"
+        "/products — MLBB Diamonds\n"
+        "/idcheck — Check ML ID\n"
+        "/balance — My Balance\n"
+        "/deposit — Deposit\n"
+        "/help — Help\n\n"
         "📞 Contact Admin — Admin ဆီ စာပို့ရန်\n"
-        "📊 Admin Panel — Admin Commands\n\n"
-        "/start — Main Menu"
+        "⚙️ Admin Panel — Admin Commands\n"
+        "🔌 API Status — API အခြေအနေ"
     )
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
 
@@ -1887,7 +2009,8 @@ async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Backup ZIP ဖိုင်ကို ဒီ Chat မှာ ပို့ပါ။\n"
         "Bot က Auto Restore လုပ်ပါမယ်။",
         parse_mode="HTML",
-        )
+    )
+
 
 async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -2221,6 +2344,7 @@ async def list_products_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
+
 async def error_handler(update, context):
     error = context.error
     print("BOT ERROR:", error)
@@ -2231,6 +2355,16 @@ async def error_handler(update, context):
 
 
 async def post_init(application: Application):
+    # ✅ Command List သတ်မှတ်
+    commands = [
+        BotCommand("start", "Start the bot"),
+        BotCommand("products", "MLBB Diamonds / Products List"),
+        BotCommand("idcheck", "Check ML ID"),
+        BotCommand("balance", "My Balance"),
+        BotCommand("deposit", "Deposit"),
+    ]
+    await application.bot.set_my_commands(commands)
+
     print("✅ Bot initialized successfully!")
     print(f"📁 Data Directory: {DATA_DIR}")
     print(f"💹 MC Profit Margin: {MC_PROFIT_MARGIN}")
@@ -2288,8 +2422,15 @@ def main():
         .build()
     )
 
+    # ✅ User Command Handler တွေ
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("products", products_command))
+    app.add_handler(CommandHandler("idcheck", idcheck_command))
+    app.add_handler(CommandHandler("balance", balance_command))
+    app.add_handler(CommandHandler("deposit", deposit_command))
+
+    # ✅ Admin Command Handler တွေ
     app.add_handler(CommandHandler("addbalance", add_balance_command))
     app.add_handler(CommandHandler("checkbalance", check_balance_command))
     app.add_handler(CommandHandler("addsub", add_subscription_command))
@@ -2303,10 +2444,14 @@ def main():
     app.add_handler(CommandHandler("backup", backup_command))
     app.add_handler(CommandHandler("restore", restore_command))
 
+    # ✅ Callback Handler တွေ
     app.add_handler(CallbackQueryHandler(callback_router))
+
+    # ✅ Message Handler တွေ
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+
     app.add_error_handler(error_handler)
 
     print("✅ Bot is running!")
