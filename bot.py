@@ -884,7 +884,7 @@ def main_keyboard():
     )
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
+        context.user_data.clear()
 
     user = update.effective_user
     user_id = user.id
