@@ -9,6 +9,7 @@ import threading
 import hashlib
 import hmac
 import base64
+import shutil
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -51,24 +52,21 @@ ADMIN_ID = 5698123475
 # =========================================================
 # DATABASE PATH (Railway Volume Support)
 # =========================================================
-# Railway Volume Mount Path
-# Railway Dashboard → Volumes → Mount Path: /data
-# ဒါဆိုရင် DB ဖိုင်တွေ /data ထဲမှာ သိမ်းပါမယ်
 DATA_DIR = os.getenv("DATA_DIR", "/data")
 if not os.path.exists(DATA_DIR):
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
     except Exception:
-        DATA_DIR = "."   # Volume မရှိရင် Local မှာ သိမ်း
+        DATA_DIR = "."
 
 ACCESS_DB = os.path.join(DATA_DIR, "access.db")
 USER_BALANCE_DB = os.path.join(DATA_DIR, "user_balance.db")
 SUBSCRIPTION_DB = os.path.join(DATA_DIR, "subscription.db")
 USER_API_DB = os.path.join(DATA_DIR, "user_api.db")
 MANUAL_PRICE_DB = os.path.join(DATA_DIR, "manual_price.db")
+MANUAL_PRODUCT_DB = os.path.join(DATA_DIR, "manual_product.db")
 
 print(f"📁 DATA_DIR: {DATA_DIR}")
-print(f"📁 ACCESS_DB: {ACCESS_DB}")
 
 def init_access_db():
     conn = sqlite3.connect(ACCESS_DB)
@@ -197,11 +195,7 @@ def is_subscription_active(user_id):
 
 def generate_license_key(user_id, expiry_date):
     data = f"{user_id}|{expiry_date}"
-    signature = hmac.new(
-        LICENSE_SECRET.encode(),
-        data.encode(),
-        hashlib.sha256
-    ).hexdigest()[:16]
+    signature = hmac.new(LICENSE_SECRET.encode(), data.encode(), hashlib.sha256).hexdigest()[:16]
     key = base64.b64encode(f"{data}|{signature}".encode()).decode()
     return key
 
@@ -212,11 +206,7 @@ def validate_license_key(license_key):
         if len(parts) != 3:
             return None
         user_id, expiry_date, signature = parts
-        expected_sig = hmac.new(
-            LICENSE_SECRET.encode(),
-            f"{user_id}|{expiry_date}".encode(),
-            hashlib.sha256
-        ).hexdigest()[:16]
+        expected_sig = hmac.new(LICENSE_SECRET.encode(), f"{user_id}|{expiry_date}".encode(), hashlib.sha256).hexdigest()[:16]
         if signature != expected_sig:
             return None
         return {"user_id": user_id, "expiry_date": expiry_date}
@@ -269,10 +259,7 @@ def init_manual_price_db():
 
 def get_manual_price(server, amount):
     conn = sqlite3.connect(MANUAL_PRICE_DB)
-    row = conn.execute(
-        "SELECT mc_price FROM manual_price WHERE server=? AND amount=?",
-        (server, amount)
-    ).fetchone()
+    row = conn.execute("SELECT mc_price FROM manual_price WHERE server=? AND amount=?", (server, amount)).fetchone()
     conn.close()
     if row:
         return {"mc_price": row[0]}
@@ -292,14 +279,9 @@ def set_manual_price(server, amount, mc_price):
 def get_all_manual_prices(server=None):
     conn = sqlite3.connect(MANUAL_PRICE_DB)
     if server:
-        rows = conn.execute(
-            "SELECT server, amount, mc_price FROM manual_price WHERE server=? ORDER BY amount",
-            (server,)
-        ).fetchall()
+        rows = conn.execute("SELECT server, amount, mc_price FROM manual_price WHERE server=? ORDER BY amount", (server,)).fetchall()
     else:
-        rows = conn.execute(
-            "SELECT server, amount, mc_price FROM manual_price ORDER BY server, amount"
-        ).fetchall()
+        rows = conn.execute("SELECT server, amount, mc_price FROM manual_price ORDER BY server, amount").fetchall()
     conn.close()
     return rows
 
@@ -308,6 +290,72 @@ def delete_manual_price(server, amount):
     conn.execute("DELETE FROM manual_price WHERE server=? AND amount=?", (server, amount))
     conn.commit()
     conn.close()
+
+def init_manual_product_db():
+    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS manual_product (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server TEXT NOT NULL,
+        amount TEXT NOT NULL,
+        sku_code TEXT,
+        display_name TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(server, amount)
+    )""")
+    conn.commit()
+    conn.close()
+
+def add_manual_product(server, amount, sku_code, display_name=None):
+    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
+    try:
+        conn.execute("""INSERT INTO manual_product
+            (server, amount, sku_code, display_name)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(server, amount) DO UPDATE SET
+            sku_code=excluded.sku_code,
+            display_name=excluded.display_name
+        """, (server, amount, sku_code or "", display_name or f"{amount} Diamonds"))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Add Manual Product Error: {e}")
+        return False
+    finally:
+        conn.close()
+
+def delete_manual_product(server, amount):
+    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
+    conn.execute("DELETE FROM manual_product WHERE server=? AND amount=?", (server, amount))
+    affected = conn.total_changes
+    conn.commit()
+    conn.close()
+    return affected > 0
+
+def get_all_manual_products(server=None):
+    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
+    if server:
+        rows = conn.execute("SELECT server, amount, sku_code, display_name FROM manual_product WHERE server=? ORDER BY amount", (server,)).fetchall()
+    else:
+        rows = conn.execute("SELECT server, amount, sku_code, display_name FROM manual_product ORDER BY server, amount").fetchall()
+    conn.close()
+    return rows
+
+def get_manual_products_for_server(server):
+    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
+    rows = conn.execute("SELECT server, amount, sku_code, display_name FROM manual_product WHERE server=?", (server,)).fetchall()
+    conn.close()
+    products = []
+    for srv, amount, sku, display_name in rows:
+        products.append({
+            "server": srv,
+            "amount": amount,
+            "sku_code": sku,
+            "name": display_name or f"{amount} Diamonds",
+            "type_name": "ML Diamonds",
+            "is_manual": True,
+            "price": 999999999,
+        })
+    return products
 
 async def request_access(update, context, force_request=False):
     user = update.effective_user
@@ -438,7 +486,7 @@ async def handle_access_callback(update, context):
 
     return True
 
-MMK_PRICES = {
+    MMK_PRICES = {
     "Global": {},
     "Malaysia": {},
     "Singapore": {},
@@ -563,7 +611,7 @@ def diamond_sort_key(product):
             pass
     return 999999999
 
-def load_server_products(server):
+    def load_server_products(server):
     params = {"limit": 1000}
     data, error = api_get("/api/v1/h2h/pricelists", params=params)
     if error:
@@ -608,21 +656,36 @@ def load_server_products(server):
         if product_server != server:
             continue
 
+        # ✅ Product Amount Extraction
         sku = str(product.get("sku_code", ""))
         name = str(product.get("name", ""))
         clean_name = re.sub(r"(?i)^mobile\s*legends?\s*", "", name).strip()
+        name_lower = clean_name.lower()
 
-        dd_match = re.search(r"(\d+)\s*\+\s*(\d+)", clean_name)
-        if dd_match:
-            a, b = dd_match.group(1), dd_match.group(2)
-            amount = f"{a}+{b}"
+        # Pass/Bundle/Pack တွေကို အရင်စစ်
+        pass_keywords = ["pass", "bundle", "elite", "twilight", "weekly", "monthly", "pack"]
+        is_pass_or_bundle = any(kw in name_lower for kw in pass_keywords)
+
+        if is_pass_or_bundle:
+            amount = re.sub(r"(?i)\bdiamonds?\b", "", clean_name)
+            amount = amount.replace(" ", "").strip()
+            if not amount:
+                amount = "unknown"
         else:
-            num_match = re.search(r"(\d+)", clean_name)
-            if num_match:
-                amount = num_match.group(1)
+            dd_match = re.search(r"(\d+)\s*\+\s*(\d+)", clean_name)
+            if dd_match:
+                a, b = dd_match.group(1), dd_match.group(2)
+                amount = f"{a}+{b}"
             else:
-                amount = re.sub(r"(?i)\bdiamonds?\b", "", clean_name)
-                amount = amount.replace(" ", "").strip() or "unknown"
+                sku_match = re.search(r"(\d+)$", sku)
+                if sku_match:
+                    amount = sku_match.group(1)
+                else:
+                    num_match = re.search(r"(\d+)", clean_name)
+                    if num_match:
+                        amount = num_match.group(1)
+                    else:
+                        amount = clean_name.replace(" ", "").strip() or "unknown"
 
         price = product.get("price", 999999999)
         try:
@@ -635,7 +698,14 @@ def load_server_products(server):
         item["amount"] = amount
         item["sku_code"] = sku
         item["price"] = price
+        item["is_manual"] = False
         products.append(item)
+
+    # Manual Product တွေ ပေါင်းထည့်
+    manual_products = get_manual_products_for_server(server)
+    if manual_products:
+        print(f"📦 Adding {len(manual_products)} manual products for {server}")
+        products.extend(manual_products)
 
     print(f"✅ Filtered {len(products)} MLBB products for {server}")
     return sorted(products, key=diamond_sort_key), None
@@ -704,7 +774,7 @@ async def check_mc_balance_alert(context, current_mc):
         except Exception as e:
             print("MC ALERT ERROR:", e)
 
-def main_keyboard():
+    def main_keyboard():
     return ReplyKeyboardMarkup(
         [
             ["💎 MLBB Diamonds", "🔍 Check ML ID"],
@@ -786,7 +856,7 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=15):
     buttons.append([InlineKeyboardButton("⬅️ Server ပြန်ရွေးမယ်", callback_data="back:servers")])
     return InlineKeyboardMarkup(buttons)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
     user = update.effective_user
@@ -925,6 +995,10 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/setprice SERVER AMOUNT MC — MC ဈေးသတ်မှတ်\n"
         "/delprice SERVER AMOUNT — MC ဈေးဖျက်\n"
         "/listprices SERVER — MC ဈေးစာရင်း\n\n"
+        "📦 <b>Product Commands</b>\n"
+        "/addproduct SERVER AMOUNT [SKU] — Dia Amount ထည့်\n"
+        "/delproduct SERVER AMOUNT — Dia Amount ဖျက်\n"
+        "/listproducts [SERVER] — Dia Amount စာရင်း\n\n"
         f"📐 <b>Formula:</b> Final MC = Base MC × {MC_PROFIT_MARGIN}"
     )
     await update.message.reply_text(text, parse_mode="HTML")
@@ -983,7 +1057,7 @@ async def show_api_status(update: Update):
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
-async def start_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def start_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["state"] = "check_id_player"
     text = (
@@ -1238,7 +1312,7 @@ async def confirm_order(query, context):
 
     context.user_data.clear()
 
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
         return
@@ -1516,7 +1590,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await callback_handler(update, context)
 
-async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.photo:
         return
 
@@ -1700,8 +1774,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
 
-
-async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     args = context.args
@@ -1848,19 +1921,17 @@ async def check_subscription_command(update: Update, context: ContextTypes.DEFAU
         f"📌 Status: <b>{sub['status']}</b>\n"
         f"✅ Active: <b>{is_subscription_active(user_id)}</b>",
         parse_mode="HTML",
-    )
+        )
 
-
-async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     args = context.args
     if len(args) != 3:
         await update.message.reply_text(
             "❌ အသုံးပြုနည်း: <code>/setprice SERVER AMOUNT MC</code>\n\n"
-            "ဥပမာ: <code>/setprice Global 86 1.660</code>\n"
-            "ဥပမာ: <code>/setprice Global 50+50 13.865</code>\n"
-            "ဥပမာ: <code>/setprice Global WeeklyPass 32.212</code>",
+            "ဥပမာ: <code>/setprice Global 1045 1.660</code>\n"
+            "ဥပမာ: <code>/setprice Global WeeklyPass 26.830</code>",
             parse_mode="HTML",
         )
         return
@@ -1879,7 +1950,6 @@ async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     set_manual_price(server, amount, mc_price)
-
     final_mc = mc_price * MC_PROFIT_MARGIN
 
     await update.message.reply_text(
@@ -1900,7 +1970,7 @@ async def delete_price_command(update: Update, context: ContextTypes.DEFAULT_TYP
     if len(args) != 2:
         await update.message.reply_text(
             "❌ အသုံးပြုနည်း: <code>/delprice SERVER AMOUNT</code>\n"
-            "ဥပမာ: <code>/delprice Global 86</code>",
+            "ဥပမာ: <code>/delprice Global 1045</code>",
             parse_mode="HTML",
         )
         return
@@ -1940,7 +2010,102 @@ async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
-async def error_handler(update, context):
+    async def add_product_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Dia Amount အသစ် ထည့်ရန်: /addproduct SERVER AMOUNT [SKU]"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text(
+            "❌ အသုံးပြုနည်း: <code>/addproduct SERVER AMOUNT [SKU]</code>\n\n"
+            "ဥပမာ:\n"
+            "<code>/addproduct Global 1045 ml-id-1045</code>\n"
+            "<code>/addproduct Global WeeklyPass MLGLWDP1D-S12</code>\n\n"
+            "💡 SKU မထည့်ရင် Amount ကို SKU အဖြစ် သုံးပါမယ်။",
+            parse_mode="HTML",
+        )
+        return
+
+    server = args[0]
+    amount = args[1]
+    sku = args[2] if len(args) > 2 else amount
+
+    valid_servers = ["Global", "Malaysia", "Singapore", "Turkey", "Philippines", "Brazil"]
+    if server not in valid_servers:
+        await update.message.reply_text(f"❌ Server မှားနေတယ်။ ရွေးနိုင်တာ: {', '.join(valid_servers)}")
+        return
+
+    if add_manual_product(server, amount, sku):
+        PRODUCT_CACHE[server] = []
+        refresh_products(server=server, force=True)
+
+        await update.message.reply_text(
+            f"✅ <b>Dia Amount ထည့်ပြီးပါပြီ။</b>\n\n"
+            f"🌍 Server: <b>{server}</b>\n"
+            f"💎 Amount: <b>{amount}</b>\n"
+            f"🔗 SKU: <code>{sku}</code>\n\n"
+            f"💡 Price သတ်မှတ်ရန်:\n"
+            f"<code>/setprice {server} {amount} MC</code>",
+            parse_mode="HTML",
+        )
+    else:
+        await update.message.reply_text("❌ ထည့်လို့မရပါ။ နောက်မှ ပြန်စမ်းပါ။")
+
+
+async def del_product_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Dia Amount ဖျက်ရန်: /delproduct SERVER AMOUNT"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    if len(args) != 2:
+        await update.message.reply_text(
+            "❌ အသုံးပြုနည်း: <code>/delproduct SERVER AMOUNT</code>\n\n"
+            "ဥပမာ: <code>/delproduct Global 1045</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    server = args[0]
+    amount = args[1]
+
+    if delete_manual_product(server, amount):
+        PRODUCT_CACHE[server] = []
+        refresh_products(server=server, force=True)
+
+        await update.message.reply_text(
+            f"✅ <b>Dia Amount ဖျက်ပြီးပါပြီ။</b>\n\n"
+            f"🌍 Server: <b>{server}</b>\n"
+            f"💎 Amount: <b>{amount}</b>",
+            parse_mode="HTML",
+        )
+    else:
+        await update.message.reply_text("❌ ဖျက်လို့မရပါ။ Amount မရှိပါ။")
+
+
+async def list_products_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Manual Product တွေ ကြည့်ရန်: /listproducts [SERVER]"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    server = args[0] if args else None
+
+    rows = get_all_manual_products(server)
+
+    if not rows:
+        await update.message.reply_text("📭 Manual Product မရှိသေးပါ။\n\nထည့်ရန်: /addproduct SERVER AMOUNT")
+        return
+
+    lines = ["📦 <b>Manual Products</b>\n━━━━━━━━━━━━━━━━━━━━"]
+    current_server = None
+    for srv, amount, sku, display_name in rows:
+        if srv != current_server:
+            lines.append(f"\n🌍 <b>{srv}</b>")
+            current_server = srv
+        lines.append(f"  💎 <b>{amount}</b> → SKU: <code>{sku}</code>")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+    async def error_handler(update, context):
     error = context.error
     print("BOT ERROR:", error)
 
@@ -1957,16 +2122,15 @@ async def post_init(application: Application):
 async def post_shutdown(application: Application):
     print("🛑 Bot shutting down...")
 
+
 def backup_databases():
-    """DB ဖိုင်တွေကို Backup လုပ်ပါ"""
     try:
         backup_dir = os.path.join(DATA_DIR, "backups")
         os.makedirs(backup_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        for db_file in [ACCESS_DB, USER_BALANCE_DB, SUBSCRIPTION_DB, USER_API_DB, MANUAL_PRICE_DB]:
+        for db_file in [ACCESS_DB, USER_BALANCE_DB, SUBSCRIPTION_DB, USER_API_DB, MANUAL_PRICE_DB, MANUAL_PRODUCT_DB]:
             if os.path.exists(db_file):
                 backup_file = os.path.join(backup_dir, f"{os.path.basename(db_file)}_{timestamp}.bak")
-                import shutil
                 shutil.copy2(db_file, backup_file)
         print(f"✅ Backup created: {backup_dir}")
     except Exception as e:
@@ -2001,8 +2165,8 @@ def main():
     init_subscription_db()
     init_user_api_db()
     init_manual_price_db()
+    init_manual_product_db()
 
-    # ✅ DB Backup (Bot Start ဖြစ်တိုင်း)
     backup_databases()
 
     print("🤖 Eren's Diamond Bot is starting...")
@@ -2028,6 +2192,9 @@ def main():
     app.add_handler(CommandHandler("setprice", set_price_command))
     app.add_handler(CommandHandler("delprice", delete_price_command))
     app.add_handler(CommandHandler("listprices", list_prices_command))
+    app.add_handler(CommandHandler("addproduct", add_product_command))
+    app.add_handler(CommandHandler("delproduct", del_product_command))
+    app.add_handler(CommandHandler("listproducts", list_products_command))
 
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
@@ -2040,3 +2207,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    
+
+            
