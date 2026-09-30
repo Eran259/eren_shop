@@ -298,7 +298,7 @@ def delete_manual_price(server, amount):
     conn.close()
 
     async def request_access(update, context, force_request=False):
-    user = update.effective_user
+        user = update.effective_user
     if not user:
         return False
     if user.id == ADMIN_ID:
