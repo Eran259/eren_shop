@@ -193,26 +193,6 @@ def is_subscription_active(user_id):
     except Exception:
         return False
 
-def generate_license_key(user_id, expiry_date):
-    data = f"{user_id}|{expiry_date}"
-    signature = hmac.new(LICENSE_SECRET.encode(), data.encode(), hashlib.sha256).hexdigest()[:16]
-    key = base64.b64encode(f"{data}|{signature}".encode()).decode()
-    return key
-
-def validate_license_key(license_key):
-    try:
-        decoded = base64.b64decode(license_key).decode()
-        parts = decoded.split("|")
-        if len(parts) != 3:
-            return None
-        user_id, expiry_date, signature = parts
-        expected_sig = hmac.new(LICENSE_SECRET.encode(), f"{user_id}|{expiry_date}".encode(), hashlib.sha256).hexdigest()[:16]
-        if signature != expected_sig:
-            return None
-        return {"user_id": user_id, "expiry_date": expiry_date}
-    except Exception:
-        return None
-
 def init_user_api_db():
     conn = sqlite3.connect(USER_API_DB)
     conn.execute("""CREATE TABLE IF NOT EXISTS user_api (
@@ -221,26 +201,6 @@ def init_user_api_db():
         secret_key TEXT,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""")
-    conn.commit()
-    conn.close()
-
-def get_user_api(user_id):
-    conn = sqlite3.connect(USER_API_DB)
-    row = conn.execute("SELECT api_key, secret_key FROM user_api WHERE user_id=?", (int(user_id),)).fetchone()
-    conn.close()
-    if row:
-        return {"api_key": row[0], "secret_key": row[1]}
-    return None
-
-def set_user_api(user_id, api_key, secret_key):
-    conn = sqlite3.connect(USER_API_DB)
-    conn.execute("""INSERT INTO user_api (user_id, api_key, secret_key, updated_at)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(user_id) DO UPDATE SET
-        api_key = ?,
-        secret_key = ?,
-        updated_at = CURRENT_TIMESTAMP
-    """, (int(user_id), api_key, secret_key, api_key, secret_key))
     conn.commit()
     conn.close()
 
@@ -289,7 +249,6 @@ def delete_manual_price(server, amount):
     conn = sqlite3.connect(MANUAL_PRICE_DB)
     conn.execute("DELETE FROM manual_price WHERE server=? AND amount=?", (server, amount))
     conn.commit()
-    conn.close()
 
 def init_manual_product_db():
     conn = sqlite3.connect(MANUAL_PRODUCT_DB)
@@ -356,6 +315,9 @@ def get_manual_products_for_server(server):
             "price": 999999999,
         })
     return products
+
+    
+    conn.close()
 
 async def request_access(update, context, force_request=False):
     user = update.effective_user
@@ -486,15 +448,6 @@ async def handle_access_callback(update, context):
 
     return True
 
-    MMK_PRICES = {
-    "Global": {},
-    "Malaysia": {},
-    "Singapore": {},
-    "Turkey": {},
-    "Philippines": {},
-    "Brazil": {},
-}
-
 PRODUCT_CACHE = {
     "Global": [],
     "Malaysia": [],
@@ -521,6 +474,15 @@ def api_headers(user_id=None):
         "X-API-Key": MELO_API_KEY,
         "X-Secret-Key": MELO_SECRET_KEY,
     }
+
+
+def get_user_api(user_id):
+    conn = sqlite3.connect(USER_API_DB)
+    row = conn.execute("SELECT api_key, secret_key FROM user_api WHERE user_id=?", (int(user_id),)).fetchone()
+    conn.close()
+    if row:
+        return {"api_key": row[0], "secret_key": row[1]}
+    return None
 
 
 def api_get(path, params=None, user_id=None, retries=3):
@@ -610,6 +572,15 @@ def diamond_sort_key(product):
         except Exception:
             pass
     return 999999999
+
+
+def format_mc(price):
+    if price is None:
+        return "Price မသတ်မှတ်ရသေး"
+    try:
+        return f"{float(price):.3f} MC"
+    except Exception:
+        return f"{price} MC"
 
 def load_server_products(server):
     params = {"limit": 1000}
@@ -707,8 +678,6 @@ def load_server_products(server):
     print(f"✅ Filtered {len(products)} MLBB products for {server}")
     return sorted(products, key=diamond_sort_key), None
 
-    
-
 
 def refresh_products(server=None, force=False):
     global PRODUCT_CACHE, LAST_PRODUCTS_LOAD
@@ -745,15 +714,6 @@ def get_mc_price(server, amount, product=None):
         final_mc = base_mc * MC_PROFIT_MARGIN
         return round(final_mc, 3)
     return None
-
-
-def format_mc(price):
-    if price is None:
-        return "Price မသတ်မှတ်ရသေး"
-    try:
-        return f"{float(price):.3f} MC"
-    except Exception:
-        return f"{price} MC"
 
 
 async def check_mc_balance_alert(context, current_mc):
@@ -965,6 +925,7 @@ async def show_my_balance(update: Update):
 
     await update.message.reply_text(text, parse_mode="HTML")
 
+
 async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Admin only")
@@ -1055,7 +1016,7 @@ async def show_api_status(update: Update):
     )
     await update.message.reply_text(text, parse_mode="HTML")
 
-    async def start_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     context.user_data["state"] = "check_id_player"
     text = (
@@ -1310,7 +1271,7 @@ async def confirm_order(query, context):
 
     context.user_data.clear()
 
-    async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
         return
@@ -1588,7 +1549,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await callback_handler(update, context)
 
-    async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.photo:
         return
 
@@ -1772,7 +1733,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
 
-    async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     args = context.args
@@ -1919,9 +1880,10 @@ async def check_subscription_command(update: Update, context: ContextTypes.DEFAU
         f"📌 Status: <b>{sub['status']}</b>\n"
         f"✅ Active: <b>{is_subscription_active(user_id)}</b>",
         parse_mode="HTML",
-        )
+    )
 
-    async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     args = context.args
@@ -2008,8 +1970,7 @@ async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
-    async def add_product_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Dia Amount အသစ် ထည့်ရန်: /addproduct SERVER AMOUNT [SKU]"""
+async def add_product_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     args = context.args
@@ -2051,7 +2012,6 @@ async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def del_product_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Dia Amount ဖျက်ရန်: /delproduct SERVER AMOUNT"""
     if update.effective_user.id != ADMIN_ID:
         return
     args = context.args
@@ -2081,7 +2041,6 @@ async def del_product_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def list_products_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Manual Product တွေ ကြည့်ရန်: /listproducts [SERVER]"""
     if update.effective_user.id != ADMIN_ID:
         return
     args = context.args
@@ -2103,7 +2062,7 @@ async def list_products_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
-    async def error_handler(update, context):
+async def error_handler(update, context):
     error = context.error
     print("BOT ERROR:", error)
 
@@ -2205,7 +2164,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    
-
-            
