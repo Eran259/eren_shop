@@ -1386,22 +1386,23 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("❌ Invalid server", show_alert=True)
             return
 
-        if query.from_user.id != ADMIN_ID:
-            bal_data, bal_error = get_balance()
-            if not bal_error:
-                bal_info = bal_data.get("data", {})
-                current_mc = bal_info.get("h2h_balance", 0)
-                if current_mc < MC_ALERT_THRESHOLD:
-                    await check_mc_balance_alert(context, current_mc)
-                    await query.edit_message_text(
-                        "⚠️ <b>Out of Stock</b>\n"
-                        "━━━━━━━━━━━━━━━━━━━━\n\n"
-                        "လက်ရှိ Diamond ပမာဏ ကုန်ဆုံးနေပါတယ်။\n"
-                        "ခဏနေမှ ပြန်လာကြည့်ပါ။",
-                        parse_mode="HTML",
-                        reply_markup=server_keyboard(),
-                    )
-                    return
+        # ✅ Customer ကို Product ပြဖို့ Admin ရဲ့ MC Balance ကို မစစ်ပါနဲ့
+# if query.from_user.id != ADMIN_ID:
+#     bal_data, bal_error = get_balance()
+#     if not bal_error:
+#         bal_info = bal_data.get("data", {})
+#         current_mc = bal_info.get("h2h_balance", 0)
+#         if current_mc < MC_ALERT_THRESHOLD:
+#             await check_mc_balance_alert(context, current_mc)
+#             await query.edit_message_text(
+#                 "⚠️ <b>Out of Stock</b>\n"
+#                 "━━━━━━━━━━━━━━━━━━━━\n\n"
+#                 "လက်ရှိ Diamond ပမာဏ ကုန်ဆုံးနေပါတယ်။\n"
+#                 "ခဏနေမှ ပြန်လာကြည့်ပါ။",
+#                 parse_mode="HTML",
+#                 reply_markup=server_keyboard(),
+#             )
+#             return
 
         await query.edit_message_text("⏳ <b>Loading Diamond Products...</b>\nခဏစောင့်ပါ...", parse_mode="HTML")
         products, load_error = ensure_server_products(server)
