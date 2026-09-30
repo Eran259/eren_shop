@@ -48,7 +48,27 @@ MC_ALERT_THRESHOLD = 100
 
 ADMIN_ID = 5698123475
 
-ACCESS_DB = "access.db"
+# =========================================================
+# DATABASE PATH (Railway Volume Support)
+# =========================================================
+# Railway Volume Mount Path
+# Railway Dashboard → Volumes → Mount Path: /data
+# ဒါဆိုရင် DB ဖိုင်တွေ /data ထဲမှာ သိမ်းပါမယ်
+DATA_DIR = os.getenv("DATA_DIR", "/data")
+if not os.path.exists(DATA_DIR):
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+    except Exception:
+        DATA_DIR = "."   # Volume မရှိရင် Local မှာ သိမ်း
+
+ACCESS_DB = os.path.join(DATA_DIR, "access.db")
+USER_BALANCE_DB = os.path.join(DATA_DIR, "user_balance.db")
+SUBSCRIPTION_DB = os.path.join(DATA_DIR, "subscription.db")
+USER_API_DB = os.path.join(DATA_DIR, "user_api.db")
+MANUAL_PRICE_DB = os.path.join(DATA_DIR, "manual_price.db")
+
+print(f"📁 DATA_DIR: {DATA_DIR}")
+print(f"📁 ACCESS_DB: {ACCESS_DB}")
 
 def init_access_db():
     conn = sqlite3.connect(ACCESS_DB)
@@ -96,8 +116,6 @@ def access_request_keyboard(user_id):
         InlineKeyboardButton("❌ Reject", callback_data=f"access:reject:{user_id}"),
     ]])
 
-USER_BALANCE_DB = "user_balance.db"
-
 def init_balance_db():
     conn = sqlite3.connect(USER_BALANCE_DB)
     conn.execute("""CREATE TABLE IF NOT EXISTS user_balance (
@@ -134,8 +152,6 @@ def deduct_user_balance(user_id, amount):
     conn.commit()
     conn.close()
     return affected > 0
-
-SUBSCRIPTION_DB = "subscription.db"
 
 def init_subscription_db():
     conn = sqlite3.connect(SUBSCRIPTION_DB)
@@ -207,8 +223,6 @@ def validate_license_key(license_key):
     except Exception:
         return None
 
-USER_API_DB = "user_api.db"
-
 def init_user_api_db():
     conn = sqlite3.connect(USER_API_DB)
     conn.execute("""CREATE TABLE IF NOT EXISTS user_api (
@@ -239,8 +253,6 @@ def set_user_api(user_id, api_key, secret_key):
     """, (int(user_id), api_key, secret_key, api_key, secret_key))
     conn.commit()
     conn.close()
-
-MANUAL_PRICE_DB = "manual_price.db"
 
 def init_manual_price_db():
     conn = sqlite3.connect(MANUAL_PRICE_DB)
@@ -297,8 +309,8 @@ def delete_manual_price(server, amount):
     conn.commit()
     conn.close()
 
-    async def request_access(update, context, force_request=False):
-        user = update.effective_user
+async def request_access(update, context, force_request=False):
+    user = update.effective_user
     if not user:
         return False
     if user.id == ADMIN_ID:
@@ -529,12 +541,6 @@ def get_balance(user_id=None):
     return api_get("/api/v1/h2h/profile/balance", user_id=user_id)
 
 
-def clean_text(value):
-    if value is None:
-        return ""
-    return str(value).strip()
-
-
 def format_amount_for_display(amount):
     try:
         if "." in str(amount):
@@ -602,27 +608,22 @@ def load_server_products(server):
         if product_server != server:
             continue
 
-        # ✅ Product Name ကနေ amount ဆွဲထုတ် (အားလုံး ပါအောင်)
         sku = str(product.get("sku_code", ""))
         name = str(product.get("name", ""))
         clean_name = re.sub(r"(?i)^mobile\s*legends?\s*", "", name).strip()
 
-        # 1. Double Diamond (50+50, 156+16) — Space ပါလည်း ဖမ်း
         dd_match = re.search(r"(\d+)\s*\+\s*(\d+)", clean_name)
         if dd_match:
             a, b = dd_match.group(1), dd_match.group(2)
             amount = f"{a}+{b}"
         else:
-            # 2. ရိုးရိုး နံပါတ် (86 Diamonds → 86)
             num_match = re.search(r"(\d+)", clean_name)
             if num_match:
                 amount = num_match.group(1)
             else:
-                # 3. Weekly Pass, Twilight Pass လိုမျိုး
                 amount = re.sub(r"(?i)\bdiamonds?\b", "", clean_name)
                 amount = amount.replace(" ", "").strip() or "unknown"
 
-        # ဈေး (price) ကို ယူပါ
         price = product.get("price", 999999999)
         try:
             price = float(price)
@@ -729,20 +730,14 @@ def server_keyboard():
 
 
 def get_unique_products(server):
-    """
-    Product list ကို amount အလိုက် unique ဖြစ်အောင် filter လုပ်ပါ
-    ✅ ဈေးအသက်သာဆုံး Server ကို ရွေးပါ
-    """
     products = PRODUCT_CACHE.get(server, [])
     amount_groups = defaultdict(list)
-
     for product in products:
         amount = product.get("amount", "?")
         amount_groups[amount].append(product)
 
     unique_products = []
     for amount, group in amount_groups.items():
-        # ဈေးအသက်သာဆုံး (price အနည်းဆုံး) ကို ရွေးပါ
         cheapest = min(group, key=lambda p: p.get("price", 999999999))
         unique_products.append(cheapest)
 
@@ -751,7 +746,6 @@ def get_unique_products(server):
 
 def amount_keyboard(server, is_admin=False, page=0, per_page=15):
     unique_products = get_unique_products(server)
-
     total = len(unique_products)
     start = page * per_page
     end = start + per_page
@@ -1957,10 +1951,26 @@ async def error_handler(update, context):
 
 async def post_init(application: Application):
     print("✅ Bot initialized successfully!")
+    print(f"📁 Data Directory: {DATA_DIR}")
 
 
 async def post_shutdown(application: Application):
     print("🛑 Bot shutting down...")
+
+def backup_databases():
+    """DB ဖိုင်တွေကို Backup လုပ်ပါ"""
+    try:
+        backup_dir = os.path.join(DATA_DIR, "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for db_file in [ACCESS_DB, USER_BALANCE_DB, SUBSCRIPTION_DB, USER_API_DB, MANUAL_PRICE_DB]:
+            if os.path.exists(db_file):
+                backup_file = os.path.join(backup_dir, f"{os.path.basename(db_file)}_{timestamp}.bak")
+                import shutil
+                shutil.copy2(db_file, backup_file)
+        print(f"✅ Backup created: {backup_dir}")
+    except Exception as e:
+        print(f"⚠️ Backup failed: {e}")
 
 
 def main():
@@ -1992,10 +2002,14 @@ def main():
     init_user_api_db()
     init_manual_price_db()
 
+    # ✅ DB Backup (Bot Start ဖြစ်တိုင်း)
+    backup_databases()
+
     print("🤖 Eren's Diamond Bot is starting...")
     print("🧪 Sandbox:", MELO_SANDBOX)
     print(f"💹 MC Profit Margin: {MC_PROFIT_MARGIN:.2f}x")
     print(f"⚠️ MC Alert Threshold: {MC_ALERT_THRESHOLD} MC")
+    print(f"📁 Data Directory: {DATA_DIR}")
 
     app = (
         Application.builder()
