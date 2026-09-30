@@ -773,7 +773,7 @@ async def check_mc_balance_alert(context, current_mc):
         except Exception as e:
             print("MC ALERT ERROR:", e)
 
-    def main_keyboard():
+def main_keyboard():
     return ReplyKeyboardMarkup(
         [
             ["💎 MLBB Diamonds", "🔍 Check ML ID"],
@@ -854,6 +854,10 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=15):
 
     buttons.append([InlineKeyboardButton("⬅️ Server ပြန်ရွေးမယ်", callback_data="back:servers")])
     return InlineKeyboardMarkup(buttons)
+
+    
+
+    
 
     async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
