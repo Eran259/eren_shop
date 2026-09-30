@@ -558,10 +558,6 @@ def diamond_sort_key(product):
     return 999999999
 
 def load_server_products(server):
-    """
-    Regular Pricelist endpoint ကနေ products တွေ load လုပ်ပါ
-    Double Diamond (50+50) တွေလည်း ပါအောင် ဆွဲထုတ်ပါ
-    """
     params = {"limit": 1000}
     data, error = api_get("/api/v1/h2h/pricelists", params=params)
     if error:
@@ -584,11 +580,9 @@ def load_server_products(server):
         brand_name = brand_map.get(brand_id, "")
         name_text = f"{brand_name} {product.get('name', '')} {product.get('type_name', '')}".lower()
 
-        # MLBB filter
         if "ml diamonds" not in name_text and "mobile legends" not in name_text:
             continue
 
-        # Server filter
         product_server = None
         if "mobile legends (indonesia)" in name_text or "(id)" in name_text:
             product_server = "Global"
@@ -608,7 +602,7 @@ def load_server_products(server):
         if product_server != server:
             continue
 
-        # ✅ SKU Code ကနေ amount ဆွဲထုတ်
+        # ✅ Product Name ကနေ amount ဆွဲထုတ် (ဦးစားပေး)
         sku = str(product.get("sku_code", ""))
         name = str(product.get("name", ""))
 
@@ -618,15 +612,15 @@ def load_server_products(server):
             a, b = dd_match.group(1), dd_match.group(2)
             amount = f"{a}+{b}"
         else:
-            # SKU ရဲ့ အဆုံးက နံပါတ်ကို ဆွဲထုတ် (ml-id-1045 → 1045)
-            sku_match = re.search(r"(\d+)$", sku)
-            if sku_match:
-                amount = sku_match.group(1)
+            # Name ကနေ ရိုးရိုး နံပါတ် ဆွဲထုတ် (86 Diamonds → 86)
+            name_match = re.search(r"(\d+)\s*Diamonds?", name, re.IGNORECASE)
+            if name_match:
+                amount = name_match.group(1)
             else:
-                # Name ကနေ ဆွဲထုတ်
-                name_match = re.search(r"(\d+)\s*Diamonds?", name, re.IGNORECASE)
-                if name_match:
-                    amount = name_match.group(1)
+                # SKU ရဲ့ အဆုံးက နံပါတ်ကို ဆွဲထုတ်
+                sku_match = re.search(r"(\d+)$", sku)
+                if sku_match:
+                    amount = sku_match.group(1)
                 else:
                     # Weekly Pass, Twilight Pass လိုမျိုး
                     amount = re.sub(r"(?i)\bmobile\s*legends?\b", "", name)
