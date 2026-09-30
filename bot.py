@@ -558,8 +558,12 @@ def diamond_sort_key(product):
     return 999999999
 
 def load_server_products(server):
+    """
+    Regular Pricelist endpoint ကနေ products တွေ load လုပ်ပါ
+    Double Diamond (50+50) တွေလည်း ပါအောင် ဆွဲထုတ်ပါ
+    """
     params = {"limit": 1000}
-    data, error = api_get("/api/v1/h2h/smart-pricelists", params=params)
+    data, error = api_get("/api/v1/h2h/pricelists", params=params)
     if error:
         PRODUCT_LAST_ERROR[server] = error
         print(f"❌ API Error [{server}]: {error}")
@@ -572,7 +576,7 @@ def load_server_products(server):
     brand_map = {str(x.get("id")): x.get("name", "") for x in brands if isinstance(x, dict)}
 
     print(f"🏷️ Brand Map for {server}: {brand_map}")
-    print(f"📦 API returned {len(rows)} smart products for {server}")
+    print(f"📦 API returned {len(rows)} products for {server}")
 
     products = []
     for product in rows:
@@ -580,9 +584,11 @@ def load_server_products(server):
         brand_name = brand_map.get(brand_id, "")
         name_text = f"{brand_name} {product.get('name', '')} {product.get('type_name', '')}".lower()
 
+        # MLBB filter
         if "ml diamonds" not in name_text and "mobile legends" not in name_text:
             continue
 
+        # Server filter
         product_server = None
         if "mobile legends (indonesia)" in name_text or "(id)" in name_text:
             product_server = "Global"
@@ -602,38 +608,35 @@ def load_server_products(server):
         if product_server != server:
             continue
 
-        name = product.get("name", "")
-        match = re.search(r"(\d+(?:\.\d+)?)\s*Diamonds?", name, re.IGNORECASE)
-        if match:
-            raw = match.group(1)
-            try:
-                f = float(raw)
-                amount = str(int(f)) if f.is_integer() else str(f)
-            except Exception:
-                amount = raw
-        else:
-            amount = re.sub(r"(?i)\bmobile\s*legends?\b", "", name)
-            amount = re.sub(r"(?i)\bdiamonds?\b", "", amount)
-            amount = amount.replace(" ", "").strip() or "unknown"
+        # ✅ SKU Code ကနေ amount ဆွဲထုတ်
+        sku = str(product.get("sku_code", ""))
+        name = str(product.get("name", ""))
 
-        variants = product.get("variants", [])
-        active_variants = [v for v in variants if v.get("status") == "active"]
-        if not active_variants:
-            active_variants = variants
-
-        if active_variants:
-            cheapest = min(active_variants, key=lambda v: v.get("price", 0))
-            sku = cheapest.get("sku_code", "")
-            price = cheapest.get("price", 0)
+        # Double Diamond (50+50, 156+16) ကို အရင်စစ်
+        dd_match = re.search(r"(\d+)\s*\+\s*(\d+)\s*Diamonds?", name, re.IGNORECASE)
+        if dd_match:
+            a, b = dd_match.group(1), dd_match.group(2)
+            amount = f"{a}+{b}"
         else:
-            sku = product.get("smart_sku_code", "")
-            price = product.get("min_price", 0)
+            # SKU ရဲ့ အဆုံးက နံပါတ်ကို ဆွဲထုတ် (ml-id-1045 → 1045)
+            sku_match = re.search(r"(\d+)$", sku)
+            if sku_match:
+                amount = sku_match.group(1)
+            else:
+                # Name ကနေ ဆွဲထုတ်
+                name_match = re.search(r"(\d+)\s*Diamonds?", name, re.IGNORECASE)
+                if name_match:
+                    amount = name_match.group(1)
+                else:
+                    # Weekly Pass, Twilight Pass လိုမျိုး
+                    amount = re.sub(r"(?i)\bmobile\s*legends?\b", "", name)
+                    amount = re.sub(r"(?i)\bdiamonds?\b", "", amount)
+                    amount = amount.replace(" ", "").strip() or "unknown"
 
         item = dict(product)
         item["server"] = server
         item["amount"] = amount
         item["sku_code"] = sku
-        item["price"] = price
         products.append(item)
 
     print(f"✅ Filtered {len(products)} MLBB products for {server}")
@@ -1857,7 +1860,7 @@ async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "❌ အသုံးပြုနည်း: <code>/setprice SERVER AMOUNT MC</code>\n\n"
             "ဥပမာ: <code>/setprice Global 86 1.660</code>\n"
-            "ဥပမာ: <code>/setprice Global 172 3.200</code>",
+            "ဥပမာ: <code>/setprice Global 50+50 13.865</code>",
             parse_mode="HTML",
         )
         return
@@ -2017,5 +2020,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
-
