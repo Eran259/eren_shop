@@ -611,7 +611,7 @@ def diamond_sort_key(product):
             pass
     return 999999999
 
-    def load_server_products(server):
+def load_server_products(server):
     params = {"limit": 1000}
     data, error = api_get("/api/v1/h2h/pricelists", params=params)
     if error:
@@ -656,13 +656,11 @@ def diamond_sort_key(product):
         if product_server != server:
             continue
 
-        # ✅ Product Amount Extraction
         sku = str(product.get("sku_code", ""))
         name = str(product.get("name", ""))
         clean_name = re.sub(r"(?i)^mobile\s*legends?\s*", "", name).strip()
         name_lower = clean_name.lower()
 
-        # Pass/Bundle/Pack တွေကို အရင်စစ်
         pass_keywords = ["pass", "bundle", "elite", "twilight", "weekly", "monthly", "pack"]
         is_pass_or_bundle = any(kw in name_lower for kw in pass_keywords)
 
@@ -701,7 +699,6 @@ def diamond_sort_key(product):
         item["is_manual"] = False
         products.append(item)
 
-    # Manual Product တွေ ပေါင်းထည့်
     manual_products = get_manual_products_for_server(server)
     if manual_products:
         print(f"📦 Adding {len(manual_products)} manual products for {server}")
@@ -709,6 +706,8 @@ def diamond_sort_key(product):
 
     print(f"✅ Filtered {len(products)} MLBB products for {server}")
     return sorted(products, key=diamond_sort_key), None
+
+    
 
 
 def refresh_products(server=None, force=False):
