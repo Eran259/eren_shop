@@ -10,6 +10,8 @@ import hashlib
 import hmac
 import base64
 import shutil
+import zipfile
+import io
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -28,6 +30,9 @@ from telegram.ext import (
     filters,
 )
 
+# =========================================================
+# CONFIG
+# =========================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 MELO_API_KEY = os.getenv("MELO_API_KEY", "")
 MELO_SECRET_KEY = os.getenv("MELO_SECRET_KEY", "")
@@ -43,6 +48,9 @@ MC_ALERT_THRESHOLD = 100
 
 ADMIN_ID = 5698123475
 
+# =========================================================
+# DATABASE PATH
+# =========================================================
 DATA_DIR = os.getenv("DATA_DIR", "/data")
 if not os.path.exists(DATA_DIR):
     try:
@@ -357,6 +365,48 @@ def get_manual_products_for_server(server):
             "price": 999999999,
         })
     return products
+
+def create_backup_zip():
+    try:
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for db_file in [ACCESS_DB, USER_BALANCE_DB, SUBSCRIPTION_DB, USER_API_DB, MANUAL_PRICE_DB, MANUAL_PRODUCT_DB]:
+                if os.path.exists(db_file):
+                    zipf.write(db_file, os.path.basename(db_file))
+        zip_buffer.seek(0)
+        return zip_buffer
+    except Exception as e:
+        print(f"Backup ZIP Error: {e}")
+        return None
+
+
+def restore_backup_zip(zip_bytes):
+    try:
+        zip_buffer = io.BytesIO(zip_bytes)
+        with zipfile.ZipFile(zip_buffer, 'r') as zipf:
+            for file_name in zipf.namelist():
+                if file_name.endswith('.db'):
+                    target_path = os.path.join(DATA_DIR, file_name)
+                    with open(target_path, 'wb') as f:
+                        f.write(zipf.read(file_name))
+        return True
+    except Exception as e:
+        print(f"Restore Error: {e}")
+        return False
+
+
+def backup_databases():
+    try:
+        backup_dir = os.path.join(DATA_DIR, "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for db_file in [ACCESS_DB, USER_BALANCE_DB, SUBSCRIPTION_DB, USER_API_DB, MANUAL_PRICE_DB, MANUAL_PRODUCT_DB]:
+            if os.path.exists(db_file):
+                backup_file = os.path.join(backup_dir, f"{os.path.basename(db_file)}_{timestamp}.bak")
+                shutil.copy2(db_file, backup_file)
+        print(f"✅ Backup created: {backup_dir}")
+    except Exception as e:
+        print(f"⚠️ Backup failed: {e}")
 
 async def request_access(update, context, force_request=False):
     user = update.effective_user
@@ -988,6 +1038,9 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/addproduct SERVER AMOUNT [SKU] — Dia Amount ထည့်\n"
         "/delproduct SERVER AMOUNT — Dia Amount ဖျက်\n"
         "/listproducts [SERVER] — Dia Amount စာရင်း\n\n"
+        "💾 <b>Backup Commands</b>\n"
+        "/backup — Data Backup ဆွဲ\n"
+        "/restore — Data Restore လုပ်\n\n"
         f"📐 <b>Formula:</b> Final MC = Base MC × {MC_PROFIT_MARGIN}"
     )
     await update.message.reply_text(text, parse_mode="HTML")
@@ -1386,24 +1439,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("❌ Invalid server", show_alert=True)
             return
 
-        # ✅ Customer ကို Product ပြဖို့ Admin ရဲ့ MC Balance ကို မစစ်ပါနဲ့
-# if query.from_user.id != ADMIN_ID:
-#     bal_data, bal_error = get_balance()
-#     if not bal_error:
-#         bal_info = bal_data.get("data", {})
-#         current_mc = bal_info.get("h2h_balance", 0)
-#         if current_mc < MC_ALERT_THRESHOLD:
-#             await check_mc_balance_alert(context, current_mc)
-#             await query.edit_message_text(
-#                 "⚠️ <b>Out of Stock</b>\n"
-#                 "━━━━━━━━━━━━━━━━━━━━\n\n"
-#                 "လက်ရှိ Diamond ပမာဏ ကုန်ဆုံးနေပါတယ်။\n"
-#                 "ခဏနေမှ ပြန်လာကြည့်ပါ။",
-#                 parse_mode="HTML",
-#                 reply_markup=server_keyboard(),
-#             )
-#             return
-
         await query.edit_message_text("⏳ <b>Loading Diamond Products...</b>\nခဏစောင့်ပါ...", parse_mode="HTML")
         products, load_error = ensure_server_products(server)
 
@@ -1614,6 +1649,43 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print("DEPOSIT SEND ERROR:", e)
 
 
+async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.document:
+        return
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    document = update.message.document
+    file_name = document.file_name or ""
+
+    if not file_name.endswith('.zip'):
+        await update.message.reply_text(
+            "❌ ZIP ဖိုင်ပဲ ပို့ပါ။\n"
+            "Restore လုပ်ရန် <code>.zip</code> ဖိုင် ပို့ပါ။",
+            parse_mode="HTML",
+        )
+        return
+
+    await update.message.reply_text("⏳ <b>Restore လုပ်နေပါတယ်...</b>", parse_mode="HTML")
+
+    try:
+        file = await context.bot.get_file(document.file_id)
+        zip_bytes = await file.download_as_bytearray()
+
+        if restore_backup_zip(bytes(zip_bytes)):
+            await update.message.reply_text(
+                "✅ <b>Restore အောင်မြင်ပါပြီ။</b>\n\n"
+                "🔄 Bot ကို Redeploy လုပ်ပါ။\n"
+                "ဒါဆိုရင် Data တွေ ပြန်ပေါ်လာပါမယ်။",
+                parse_mode="HTML",
+            )
+        else:
+            await update.message.reply_text("❌ Restore လုပ်လို့ မရပါ။")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {html.escape(str(e))}")
+
+
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -1763,6 +1835,47 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start — Main Menu"
     )
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
+
+
+async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    await update.message.reply_text("⏳ <b>Backup ဆွဲနေပါတယ်...</b>", parse_mode="HTML")
+
+    zip_buffer = create_backup_zip()
+    if not zip_buffer:
+        await update.message.reply_text("❌ Backup ဆွဲလို့ မရပါ။")
+        return
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_name = f"eren_shop_backup_{timestamp}.zip"
+
+    await update.message.reply_document(
+        document=zip_buffer,
+        filename=file_name,
+        caption=(
+            "✅ <b>Backup ဆွဲပြီးပါပြီ။</b>\n\n"
+            "📦 ဒီ ZIP ဖိုင်ကို သိမ်းထားပါ။\n\n"
+            "💡 <b>Restore လုပ်ရန်:</b>\n"
+            "1. ZIP ဖိုင်ကို ဒီ Chat မှာ ပြန်ပို့ပါ\n"
+            "2. Bot က Auto Restore လုပ်ပါမယ်\n\n"
+            f"📁 Backup: <code>{file_name}</code>"
+        ),
+        parse_mode="HTML",
+    )
+
+
+async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    await update.message.reply_text(
+        "📦 <b>Restore လုပ်ရန်</b>\n\n"
+        "Backup ZIP ဖိုင်ကို ဒီ Chat မှာ ပို့ပါ။\n"
+        "Bot က Auto Restore လုပ်ပါမယ်။",
+        parse_mode="HTML",
+    )
 
 async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -2001,6 +2114,7 @@ async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
+
 async def add_product_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -2093,7 +2207,6 @@ async def list_products_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
-
 async def error_handler(update, context):
     error = context.error
     print("BOT ERROR:", error)
@@ -2110,20 +2223,6 @@ async def post_init(application: Application):
 
 async def post_shutdown(application: Application):
     print("🛑 Bot shutting down...")
-
-
-def backup_databases():
-    try:
-        backup_dir = os.path.join(DATA_DIR, "backups")
-        os.makedirs(backup_dir, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        for db_file in [ACCESS_DB, USER_BALANCE_DB, SUBSCRIPTION_DB, USER_API_DB, MANUAL_PRICE_DB, MANUAL_PRODUCT_DB]:
-            if os.path.exists(db_file):
-                backup_file = os.path.join(backup_dir, f"{os.path.basename(db_file)}_{timestamp}.bak")
-                shutil.copy2(db_file, backup_file)
-        print(f"✅ Backup created: {backup_dir}")
-    except Exception as e:
-        print(f"⚠️ Backup failed: {e}")
 
 
 def main():
@@ -2184,9 +2283,12 @@ def main():
     app.add_handler(CommandHandler("addproduct", add_product_command))
     app.add_handler(CommandHandler("delproduct", del_product_command))
     app.add_handler(CommandHandler("listproducts", list_products_command))
+    app.add_handler(CommandHandler("backup", backup_command))
+    app.add_handler(CommandHandler("restore", restore_command))
 
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+    app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     app.add_error_handler(error_handler)
 
@@ -2196,6 +2298,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
