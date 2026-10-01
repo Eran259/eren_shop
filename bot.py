@@ -658,7 +658,6 @@ def get_unique_products(server):
 
 
 async def check_transaction_status(transaction_id):
-    """Transaction Status စစ်"""
     data, error = api_get(f"/api/v1/h2h/transaction/{transaction_id}")
     if error:
         return None, error
@@ -667,15 +666,16 @@ async def check_transaction_status(transaction_id):
 
 
 async def get_transaction_detail(transaction_id):
-    """Transaction Detail (Price Charged) ရယူ"""
     data, error = api_get(f"/api/v1/h2h/transaction/{transaction_id}")
     if error:
         return None, error
     return data.get("data", {}), None
 
 
-async def auto_status_update(context, transaction_id, user_id, chat_id, message_id, max_wait=600):
-    """Auto Status Check — ၁၅ စက္ကန့် တစ်ခါ + Auto Refund"""
+async def auto_status_update(context, transaction_id, user_id, chat_id, message_id,
+                              order_info=None, product_amount="",
+                              user_info=None, max_wait=600):
+    """Auto Status Check + Auto Refund"""
     start_time = time.time()
     check_interval = 15
     refunded = False
@@ -704,17 +704,31 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
                         refunded = True
                         print(f"✅ Refunded {price_charged} MC to {user_id}")
 
+            # ✅ Ref သတ်မှတ်
+            if status.lower() == "success":
+                ref_value = "0"
+            else:
+                if price_charged > 0:
+                    ref_value = f"{price_charged:.3f} MC"
+                else:
+                    ref_value = str(product_amount) if product_amount else "0"
+
+            info_text = order_info if order_info else ""
+            new_balance = get_user_balance(user_id)
+
+            # ✅ User ဆီ Update (User Info မပါ)
             try:
                 text = (
                     f"{emoji} <b>Order {status.upper()}</b>\n"
                     "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"{info_text}"
+                    f"⏳ Status: <b>{status.upper()}</b>\n"
+                    f"🔖 Ref: <b>{html.escape(ref_value)}</b>\n"
                     f"🆔 Trx: <code>{transaction_id}</code>\n"
-                    f"⏳ Status: <b>{status.upper()}</b>"
+                    f"🪙 လက်ကျန်: <b>{new_balance:.3f} MC</b>"
                 )
                 if status.lower() in ("failed", "canceled", "refunded"):
-                    text += f"\n\n💰 <b>MC ပြန်ထည့်ပြီးပါပြီ။</b>"
-                    if price_charged > 0:
-                        text += f"\n🪙 Refunded: <b>{price_charged:.3f} MC</b>"
+                    text += f"\n\n💰 <b>Refunded ပြန်ထည့်ပြီးပါပြီ။</b>"
 
                 await context.bot.edit_message_text(
                     chat_id=chat_id, message_id=message_id,
@@ -723,16 +737,21 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
             except Exception as e:
                 print("STATUS UPDATE ERROR:", e)
 
+            # ✅ Alert Group ဆီ (User Info + Order Info)
             try:
                 alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
+                user_section = user_info if user_info else ""
                 alert_text = (
-                    f"{emoji} <b>Transaction {status.upper()}</b>\n\n"
+                    f"{emoji} <b>Transaction {status.upper()}</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"{user_section}"
+                    f"{info_text}"
                     f"🆔 Trx: <code>{transaction_id}</code>\n"
-                    f"👤 User: <code>{user_id}</code>"
+                    f"🔖 Ref: <b>{html.escape(ref_value)}</b>\n"
+                    f"🪙 လက်ကျန်: <b>{new_balance:.3f} MC</b>"
                 )
                 if status.lower() in ("failed", "canceled", "refunded"):
-                    if price_charged > 0:
-                        alert_text += f"\n💰 Refunded: <b>{price_charged:.3f} MC</b>"
+                    alert_text += f"\n\n💰 <b>Refunded ပြန်ထည့်ပြီးပါပြီ။</b>"
 
                 await context.bot.send_message(
                     chat_id=alert_target, text=alert_text, parse_mode="HTML",
@@ -1365,7 +1384,23 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
 
-    # ✅ Auto Status Check
+    order_info = (
+        f"🌍 Server: <b>{html.escape(server)}</b>\n"
+        f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
+        f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
+        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
+        f"💎 Product: <b>{html.escape(str(display_amount))}</b>\n"
+        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+    )
+
+    uname = f"@{user.username}" if user.username else "—"
+    fname = user.first_name or "User"
+    user_info = (
+        f"👤 Name: <b>{html.escape(fname)}</b>\n"
+        f"🔗 Username: <b>{html.escape(uname)}</b>\n"
+        f"🆔 User ID: <code>{user_id}</code>\n\n"
+    )
+
     asyncio.create_task(
         auto_status_update(
             context=context,
@@ -1373,23 +1408,19 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id=user_id,
             chat_id=update.effective_chat.id,
             message_id=sent_msg.message_id,
+            order_info=order_info,
+            product_amount=str(amount_input),
+            user_info=user_info,
         )
     )
 
     try:
-        username = f"@{user.username}" if user.username else "—"
-        first_name = user.first_name or "User"
         alarm_text = (
             "🔔 <b>NEW ORDER!</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👤 Name: <b>{html.escape(first_name)}</b>\n"
-            f"🔗 Username: <b>{html.escape(username)}</b>\n"
+            f"👤 Name: <b>{html.escape(fname)}</b>\n"
+            f"🔗 Username: <b>{html.escape(uname)}</b>\n"
             f"🆔 User ID: <code>{user_id}</code>\n\n"
-            f"🌍 Server: <b>{html.escape(server)}</b>\n"
-            f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
-            f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
-            f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
-            f"💎 Product: <b>{html.escape(str(display_amount))}</b>\n"
-            f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+            f"{order_info}"
             f"🧾 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
             f"⏰ Time: <code>{order_time}</code>"
         )
@@ -1504,7 +1535,22 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
 
-    # ✅ Auto Status Check
+    order_info = (
+        f"🎮 Game: <b>PUBG Mobile</b>\n"
+        f"🆔 Player ID: <code>{html.escape(player_id)}</code>\n\n"
+        f"🎮 Product: <b>{html.escape(amount_input)} UC</b>\n"
+        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n"
+        f"📦 SKU: <code>{html.escape(str(used_sku))}</code>\n\n"
+    )
+
+    uname = f"@{user.username}" if user.username else "—"
+    fname = user.first_name or "User"
+    user_info = (
+        f"👤 Name: <b>{html.escape(fname)}</b>\n"
+        f"🔗 Username: <b>{html.escape(uname)}</b>\n"
+        f"🆔 User ID: <code>{user_id}</code>\n\n"
+    )
+
     asyncio.create_task(
         auto_status_update(
             context=context,
@@ -1512,21 +1558,19 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id=user_id,
             chat_id=update.effective_chat.id,
             message_id=sent_msg.message_id,
+            order_info=order_info,
+            product_amount=str(amount_input),
+            user_info=user_info,
         )
     )
 
     try:
-        username = f"@{user.username}" if user.username else "—"
-        first_name = user.first_name or "User"
         alarm_text = (
             "🔔 <b>NEW PUBG ORDER!</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👤 Name: <b>{html.escape(first_name)}</b>\n"
-            f"🔗 Username: <b>{html.escape(username)}</b>\n"
+            f"👤 Name: <b>{html.escape(fname)}</b>\n"
+            f"🔗 Username: <b>{html.escape(uname)}</b>\n"
             f"🆔 User ID: <code>{user_id}</code>\n\n"
-            f"🆔 Player ID: <code>{html.escape(player_id)}</code>\n\n"
-            f"🎮 Product: <b>{html.escape(amount_input)} UC</b>\n"
-            f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n"
-            f"📦 SKU: <code>{html.escape(str(used_sku))}</code>\n\n"
+            f"{order_info}"
             f"🧾 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
             f"⏰ Time: <code>{order_time}</code>"
         )
@@ -1660,7 +1704,21 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
 
-    # ✅ Auto Status Check
+    order_info = (
+        f"⭐ Game: <b>{label}</b>\n"
+        f"🎯 Target: <code>{html.escape(target)}</code>\n\n"
+        f"{emoji} Product: <b>{html.escape(str(display_amount))}</b>\n"
+        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+    )
+
+    uname = f"@{user.username}" if user.username else "—"
+    fname = user.first_name or "User"
+    user_info = (
+        f"👤 Name: <b>{html.escape(fname)}</b>\n"
+        f"🔗 Username: <b>{html.escape(uname)}</b>\n"
+        f"🆔 User ID: <code>{user_id}</code>\n\n"
+    )
+
     asyncio.create_task(
         auto_status_update(
             context=context,
@@ -1668,20 +1726,19 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id=user_id,
             chat_id=update.effective_chat.id,
             message_id=sent_msg.message_id,
+            order_info=order_info,
+            product_amount=str(amount_input),
+            user_info=user_info,
         )
     )
 
     try:
-        username = f"@{user.username}" if user.username else "—"
-        first_name = user.first_name or "User"
         alarm_text = (
             f"🔔 <b>NEW {label.upper()} ORDER!</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👤 Name: <b>{html.escape(first_name)}</b>\n"
-            f"🔗 Username: <b>{html.escape(username)}</b>\n"
+            f"👤 Name: <b>{html.escape(fname)}</b>\n"
+            f"🔗 Username: <b>{html.escape(uname)}</b>\n"
             f"🆔 User ID: <code>{user_id}</code>\n\n"
-            f"🎯 Target: <code>{html.escape(target)}</code>\n\n"
-            f"{emoji} Product: <b>{html.escape(str(display_amount))}</b>\n"
-            f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+            f"{order_info}"
         )
         if serial_number:
             alarm_text += f"🎁 Gift Code: <code>{html.escape(str(serial_number))}</code>\n\n"
@@ -2273,8 +2330,7 @@ def main():
         license_info = validate_license_key(LICENSE_KEY)
         if not license_info:
             print("❌ LICENSE_KEY မှားနေပါတယ်။")
-            return
-        try:
+            return        try:
             expiry = datetime.strptime(license_info["expiry_date"], "%Y-%m-%d")
             if datetime.now() > expiry:
                 print("❌ LICENSE_KEY သက်တမ်းကုန်သွားပါပြီ။")
