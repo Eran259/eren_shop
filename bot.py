@@ -1375,7 +1375,7 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print("ORDER ALARM ERROR:", e)
 
-    async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """ .pg USER_ID AMOUNT """
     if not update.message:
         return
