@@ -2330,7 +2330,8 @@ def main():
         license_info = validate_license_key(LICENSE_KEY)
         if not license_info:
             print("❌ LICENSE_KEY မှားနေပါတယ်။")
-            return        try:
+            return
+        try:
             expiry = datetime.strptime(license_info["expiry_date"], "%Y-%m-%d")
             if datetime.now() > expiry:
                 print("❌ LICENSE_KEY သက်တမ်းကုန်သွားပါပြီ။")
