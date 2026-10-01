@@ -48,6 +48,7 @@ MC_PER_USD = 17.98786
 KS_PER_USD = 4450
 
 ADMIN_ID = 5698123475
+ALERT_CHAT_ID = int(os.getenv("ALERT_CHAT_ID", "0"))
 
 AMOUNT_ALIASES = {
     "wp": "weeklypass",
@@ -99,6 +100,7 @@ MANUAL_PRICE_DB = os.path.join(DATA_DIR, "manual_price.db")
 MANUAL_PRODUCT_DB = os.path.join(DATA_DIR, "manual_product.db")
 
 print(f"📁 DATA_DIR: {DATA_DIR}")
+print(f"🔔 ALERT_CHAT_ID: {ALERT_CHAT_ID}")
 
 
 def mc_to_ks(mc_amount):
@@ -655,24 +657,17 @@ def get_unique_products(server):
     return unique_products
 
 
-# ============================================================
-# ✅ AUTO STATUS CHECK SYSTEM
-# ============================================================
-
 async def check_transaction_status(transaction_id):
     """Transaction Status စစ်"""
     data, error = api_get(f"/api/v1/h2h/transaction/{transaction_id}")
     if error:
         return None, error
     result = data.get("data", {})
-    status = result.get("status", "unknown")
-    return status, None
+    return result.get("status", "unknown"), None
 
 
 async def auto_status_update(context, transaction_id, user_id, chat_id, message_id, max_wait=600):
-    """
-    Transaction Status ကို ၁၀ မိနစ်အထိ စောင့်ပြီး Update
-    """
+    """Auto Status Check — ၁၅ စက္ကန့် တစ်ခါ"""
     start_time = time.time()
     check_interval = 15
 
@@ -693,17 +688,17 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
                     f"⏳ Status: <b>{status.upper()}</b>"
                 )
                 await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=text,
-                    parse_mode="HTML",
+                    chat_id=chat_id, message_id=message_id,
+                    text=text, parse_mode="HTML",
                 )
             except Exception as e:
                 print("STATUS UPDATE ERROR:", e)
 
+            # ✅ Alert Group ဆီ ပို့
             try:
+                alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
                 await context.bot.send_message(
-                    chat_id=ADMIN_ID,
+                    chat_id=alert_target,
                     text=(
                         f"{emoji} <b>Transaction {status.upper()}</b>\n\n"
                         f"🆔 Trx: <code>{transaction_id}</code>\n"
@@ -712,7 +707,7 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
                     parse_mode="HTML",
                 )
             except Exception as e:
-                print("ADMIN STATUS ERROR:", e)
+                print("ALERT STATUS ERROR:", e)
 
             break
     else:
@@ -874,7 +869,7 @@ def ensure_server_products(server):
     products = PRODUCT_CACHE.get(server, [])
     return products, PRODUCT_LAST_ERROR.get(server) if not products else None
 
-def main_keyboard():
+    def main_keyboard():
     return ReplyKeyboardMarkup(
         [
             ["💎 MLBB Diamonds", "🎮 PUBG UC"],
@@ -1060,6 +1055,7 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 <b>Admin Panel</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🪙 Melostore MC: <b>{balance:,.2f} MC</b>\n"
         f"💵 USD: <b>${usd:,.2f}</b>\n\n"
+        f"🔔 Alert Group: <code>{ALERT_CHAT_ID}</code>\n\n"
         "💡 <b>Commands</b>\n"
         "/addbalance USER_ID MC\n"
         "/checkbalance USER_ID\n"
@@ -1337,7 +1333,6 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
 
-    # ✅ Auto Status Check
     asyncio.create_task(
         auto_status_update(
             context=context,
@@ -1348,6 +1343,7 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     )
 
+    # ✅ Alert Group ဆီ ပို့
     try:
         username = f"@{user.username}" if user.username else "—"
         first_name = user.first_name or "User"
@@ -1365,7 +1361,8 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🧾 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
             f"⏰ Time: <code>{order_time}</code>"
         )
-        await context.bot.send_message(chat_id=ADMIN_ID, text=alarm_text, parse_mode="HTML")
+        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
+        await context.bot.send_message(chat_id=alert_target, text=alarm_text, parse_mode="HTML")
     except Exception as e:
         print("ORDER ALARM ERROR:", e)
 
@@ -1475,7 +1472,6 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
 
-    # ✅ Auto Status Check
     asyncio.create_task(
         auto_status_update(
             context=context,
@@ -1501,7 +1497,8 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🧾 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
             f"⏰ Time: <code>{order_time}</code>"
         )
-        await context.bot.send_message(chat_id=ADMIN_ID, text=alarm_text, parse_mode="HTML")
+        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
+        await context.bot.send_message(chat_id=alert_target, text=alarm_text, parse_mode="HTML")
     except Exception as e:
         print("ORDER ALARM ERROR:", e)
 
@@ -1630,7 +1627,6 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
 
-    # ✅ Auto Status Check
     asyncio.create_task(
         auto_status_update(
             context=context,
@@ -1659,7 +1655,8 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🧾 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
             f"⏰ Time: <code>{order_time}</code>"
         )
-        await context.bot.send_message(chat_id=ADMIN_ID, text=alarm_text, parse_mode="HTML")
+        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
+        await context.bot.send_message(chat_id=alert_target, text=alarm_text, parse_mode="HTML")
     except Exception as e:
         print("ORDER ALARM ERROR:", e)
 
@@ -1684,8 +1681,9 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_id = update.message.photo[-1].file_id
 
     try:
+        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
         await context.bot.send_photo(
-            chat_id=ADMIN_ID, photo=file_id,
+            chat_id=alert_target, photo=file_id,
             caption=(
                 "💳 <b>NEW DEPOSIT</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"👤 Name: <b>{html.escape(user.first_name or '—')}</b>\n"
@@ -2225,6 +2223,7 @@ async def post_init(application: Application):
     print("✅ Bot initialized!")
     print(f"📁 {DATA_DIR}")
     print(f"💹 MC Margin: {MC_PROFIT_MARGIN}")
+    print(f"🔔 Alert Group: {ALERT_CHAT_ID}")
 
 
 async def post_shutdown(application: Application):
@@ -2260,6 +2259,7 @@ def main():
 
     print("🤖 Starting...")
     print(f"🧪 Sandbox: {MELO_SANDBOX}")
+    print(f"🔔 Alert Chat ID: {ALERT_CHAT_ID}")
 
     app = (
         Application.builder()
@@ -2294,3 +2294,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    
