@@ -12,6 +12,7 @@ import base64
 import shutil
 import zipfile
 import io
+import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -356,7 +357,6 @@ def get_manual_products_for_server(server):
     conn.close()
     products = []
     for srv, amount, sku, display_name in rows:
-        # ✅ Game Type သတ်မှတ်
         if srv in ("Global", "Malaysia", "Singapore", "Turkey", "Philippines", "Brazil"):
             game_type = "MLBB"
         elif "PUBG" in srv:
@@ -654,6 +654,70 @@ def get_unique_products(server):
 
     return unique_products
 
+
+# ============================================================
+# ✅ AUTO STATUS CHECK SYSTEM
+# ============================================================
+
+async def check_transaction_status(transaction_id):
+    """Transaction Status စစ်"""
+    data, error = api_get(f"/api/v1/h2h/transaction/{transaction_id}")
+    if error:
+        return None, error
+    result = data.get("data", {})
+    status = result.get("status", "unknown")
+    return status, None
+
+
+async def auto_status_update(context, transaction_id, user_id, chat_id, message_id, max_wait=600):
+    """
+    Transaction Status ကို ၁၀ မိနစ်အထိ စောင့်ပြီး Update
+    """
+    start_time = time.time()
+    check_interval = 15
+
+    while (time.time() - start_time) < max_wait:
+        await asyncio.sleep(check_interval)
+
+        status, error = await check_transaction_status(transaction_id)
+        if error:
+            continue
+
+        if status and status.lower() in ("success", "failed", "canceled", "refunded"):
+            emoji = "✅" if status.lower() == "success" else "❌"
+            try:
+                text = (
+                    f"{emoji} <b>Order {status.upper()}</b>\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"🆔 Trx: <code>{transaction_id}</code>\n"
+                    f"⏳ Status: <b>{status.upper()}</b>"
+                )
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                print("STATUS UPDATE ERROR:", e)
+
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=(
+                        f"{emoji} <b>Transaction {status.upper()}</b>\n\n"
+                        f"🆔 Trx: <code>{transaction_id}</code>\n"
+                        f"👤 User: <code>{user_id}</code>"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                print("ADMIN STATUS ERROR:", e)
+
+            break
+    else:
+        print(f"⏰ Status check timeout for {transaction_id}")
+
 def load_server_products(server):
     params = {"limit": 1000}
     data, error = api_get("/api/v1/h2h/pricelists", params=params)
@@ -676,7 +740,6 @@ def load_server_products(server):
         brand_name = brand_map.get(brand_id, "")
         name_text = f"{brand_name} {product.get('name', '')} {product.get('type_name', '')}".lower()
 
-        # ✅ Game Filter
         game_keywords = {
             "MLBB": ["ml diamonds", "mobile legends"],
             "PUBG": ["pubg", "unknown cash", "uc"],
@@ -692,7 +755,6 @@ def load_server_products(server):
         if not game_type:
             continue
 
-        # ✅ Server Mapping
         product_server = None
 
         if game_type == "MLBB":
@@ -715,7 +777,6 @@ def load_server_products(server):
             product_server = "PUBG Global"
 
         elif game_type == "Telegram":
-            # ✅ Star နဲ့ Premium ခွဲ (မရောအောင်)
             if "premium" in name_text or "gift card" in name_text or "gazette" in name_text:
                 product_server = "Telegram Premium"
             elif "star" in name_text:
@@ -729,13 +790,11 @@ def load_server_products(server):
         sku = str(product.get("sku_code", ""))
         name = str(product.get("name", ""))
 
-        # ✅ Amount & Display Name
         if game_type == "PUBG":
             num_match = re.search(r"(\d+)", name)
             amount = num_match.group(1) if num_match else name.strip()
             display_name = name.strip()
         elif game_type == "Telegram":
-            # Premium အတွက် Display Name က "3 Months" လို
             if product_server == "Telegram Premium":
                 amount = name.strip()
                 display_name = name.strip()
@@ -1276,7 +1335,18 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n\n"
         f"🪙 လက်ကျန် MC: <b>{new_balance:.3f} MC</b>"
     )
-    await checking_msg.edit_text(text, parse_mode="HTML")
+    sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
+
+    # ✅ Auto Status Check
+    asyncio.create_task(
+        auto_status_update(
+            context=context,
+            transaction_id=str(transaction_id),
+            user_id=user_id,
+            chat_id=update.effective_chat.id,
+            message_id=sent_msg.message_id,
+        )
+    )
 
     try:
         username = f"@{user.username}" if user.username else "—"
@@ -1350,7 +1420,6 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Balance ဖြတ်
     if not deduct_user_balance(user_id, mc_price):
         await update.message.reply_text("❌ Balance ဖြတ်လို့ မရပါ။")
         return
@@ -1360,7 +1429,6 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
     )
 
-    # ✅ Fallback
     skus = PUBG_FALLBACK_SKUS[amount_input]
     last_error = None
     data = None
@@ -1405,7 +1473,18 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n\n"
         f"🪙 လက်ကျန် MC: <b>{new_balance:.3f} MC</b>"
     )
-    await checking_msg.edit_text(text, parse_mode="HTML")
+    sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
+
+    # ✅ Auto Status Check
+    asyncio.create_task(
+        auto_status_update(
+            context=context,
+            transaction_id=str(transaction_id),
+            user_id=user_id,
+            chat_id=update.effective_chat.id,
+            message_id=sent_msg.message_id,
+        )
+    )
 
     try:
         username = f"@{user.username}" if user.username else "—"
@@ -1450,7 +1529,6 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = args[0].strip()
     amount_input = args[1].strip()
 
-    # ✅ Star နဲ့ Premium နှစ်ခုလုံးမှာ ရှာ (မရောအောင်)
     matched_product = None
     matched_server = None
 
@@ -1550,7 +1628,18 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{code_section}\n"
         f"🪙 လက်ကျန် MC: <b>{new_balance:.3f} MC</b>"
     )
-    await checking_msg.edit_text(text, parse_mode="HTML")
+    sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
+
+    # ✅ Auto Status Check
+    asyncio.create_task(
+        auto_status_update(
+            context=context,
+            transaction_id=str(transaction_id),
+            user_id=user_id,
+            chat_id=update.effective_chat.id,
+            message_id=sent_msg.message_id,
+        )
+    )
 
     try:
         username = f"@{user.username}" if user.username else "—"
@@ -1645,7 +1734,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text.strip()
 
-    # ✅ Commands
     if text.lower().startswith(".ml "):
         parts = text.split()
         if len(parts) < 4:
@@ -1685,7 +1773,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await tg_command(update, context)
         return
 
-    # ✅ Buttons
     if text == "💎 MLBB Diamonds":
         await server_product_shortcut(update, context, "Global")
         return
@@ -1744,7 +1831,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Admin only")
         return
 
-    # ✅ States
     state = context.user_data.get("state")
 
     if state == "check_id_player":
@@ -2065,9 +2151,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = query.from_user.id
         user_balance = get_user_balance(user_id)
 
-        if server == "Telegram Stars":
-            prompt = "🎯 <b>Telegram Username</b> ထည့်ပါ။\n\nဥပမာ: <code>@username</code>"
-        elif server == "Telegram Premium":
+        if server in ("Telegram Stars", "Telegram Premium"):
             prompt = "🎯 <b>Telegram Username</b> ထည့်ပါ။\n\nဥပမာ: <code>@username</code>"
         else:
             prompt = "🆔 <b>Player ID</b> ထည့်ပါ။\nဥပမာ: <code>12345678</code>"
