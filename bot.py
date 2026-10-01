@@ -1291,7 +1291,7 @@ async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_
     else:
         await update.message.reply_text(text, parse_mode="HTML")
 
-    async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """.ml PLAYER_ID ZONE_ID [SERVER] AMOUNT"""
     if not update.message:
         return
