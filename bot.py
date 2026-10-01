@@ -64,7 +64,6 @@ SERVER_MAP = {
     "ttr": "Turkey", "tr": "Turkey", "turkey": "Turkey",
     "php": "Philippines", "ph": "Philippines", "philippines": "Philippines",
     "brl": "Brazil", "br": "Brazil", "brazil": "Brazil",
-    # ✅ New Server Names
     "pubg": "PUBG",
     "tgs": "TGS",
     "tgp": "TGP",
@@ -694,7 +693,6 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
         if status and status.lower() in ("success", "failed", "canceled", "refunded"):
             emoji = "✅" if status.lower() == "success" else "❌"
 
-            # ✅ AUTO REFUND
             if status.lower() in ("failed", "canceled", "refunded") and not refunded:
                 detail, err = await get_transaction_detail(transaction_id)
                 if not err and detail:
@@ -708,7 +706,6 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
                         refunded = True
                         print(f"✅ Refunded {price_charged} MC to {user_id}")
 
-            # ✅ Ref သတ်မှတ်
             if status.lower() == "success":
                 ref_value = "0"
             else:
@@ -720,7 +717,6 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
             info_text = order_info if order_info else ""
             new_balance = get_user_balance(user_id)
 
-            # ✅ User ဆီ Update
             try:
                 text = (
                     f"{emoji} <b>Order {status.upper()}</b>\n"
@@ -741,7 +737,6 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
             except Exception as e:
                 print("STATUS UPDATE ERROR:", e)
 
-            # ✅ Alert Group ဆီ
             try:
                 alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
                 user_section = user_info if user_info else ""
@@ -1195,6 +1190,14 @@ def check_ml_nickname(player_id, zone_id):
     return api_post("/api/v1/h2h/check-nickname", payload)
 
 
+def check_ml_purchase_limit(player_id, zone_id):
+    payload = {
+        "customer_target": str(player_id),
+        "customer_target_zone": str(zone_id),
+    }
+    return api_post("/api/v1/h2h/mobile-legends/purchase-limit", payload)
+
+
 async def process_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player_id = context.user_data.get("check_player_id")
     zone_id = update.message.text.strip()
@@ -1203,8 +1206,9 @@ async def process_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text("🔍 <b>Checking...</b>", parse_mode="HTML")
-    data, error = check_ml_nickname(player_id, zone_id)
 
+    # Nickname
+    data, error = check_ml_nickname(player_id, zone_id)
     if error:
         await update.message.reply_text(f"❌ <b>Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
         context.user_data.clear()
@@ -1212,12 +1216,51 @@ async def process_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     info = data.get("data", {})
     nickname = info.get("username") or info.get("nickname") or info.get("name") or "-"
+    region = info.get("region") or info.get("region_name") or "-"
+
+    # DD + WP
+    dd_lines = ["💎 <b>Double Diamond</b>"]
+    wp_lines = ["📅 <b>Weekly Pass</b>"]
+
+    pl_data, pl_error = check_ml_purchase_limit(player_id, zone_id)
+    if not pl_error and pl_data:
+        pl_info = pl_data.get("data", {})
+
+        dd_items = pl_info.get("double_diamonds", {}).get("items", [])
+        for item in dd_items:
+            pkg = item.get("package_code", "?")
+            limit = item.get("limit_reached", True)
+            match = re.search(r"(\d+)", pkg)
+            pkg_display = f"{match.group(1)}+{match.group(1)}" if match else pkg
+
+            if not limit:
+                dd_lines.append(f"  ✅ <b>{pkg_display}</b> • ရနိုင်")
+            else:
+                dd_lines.append(f"  ❌ <b>{pkg_display}</b> • မရ")
+
+        wp_items = pl_info.get("weekly_pass", {}).get("items", [])
+        for item in wp_items:
+            pkg = item.get("package_code", "?")
+            limit = item.get("limit_reached", True)
+            if not limit:
+                wp_lines.append(f"  ✅ <b>{pkg}</b> • ရနိုင်")
+            else:
+                wp_lines.append(f"  ❌ <b>{pkg}</b> • မရ")
+
+    dd_text = "\n".join(dd_lines) if len(dd_lines) > 1 else "💎 Double Diamond: ❌ မရ"
+    wp_text = "\n".join(wp_lines) if len(wp_lines) > 1 else "📅 Weekly Pass: ❌ မရ"
 
     text = (
-        "🔍 <b>Result</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🔍 <b>MLBB ID Result</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
         f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
-        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>"
+        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n"
+        f"🌍 Region: <b>{html.escape(str(region))}</b>\n\n"
+        f"{dd_text}\n\n"
+        f"{wp_text}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "✅ <b>ID Verified</b>"
     )
     context.user_data.clear()
     await update.message.reply_text(text, parse_mode="HTML")
@@ -1378,83 +1421,38 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     info = data.get("data", {})
     nickname = info.get("username") or info.get("nickname") or info.get("name") or "-"
 
-    await checking_msg.edit_text("🛒 <b>Creating Order...</b>", parse_mode="HTML")
-
-    product = dict(matched_product)
-    data, error = create_transaction(product, player_id, zone_id)
-
-    if error:
-        await checking_msg.edit_text(f"❌ <b>Order Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
-        return
-
-    result = data.get("data", {})
-    transaction_id = result.get("id", "-")
-    status = result.get("status", "pending")
-    order_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    if deduct_user_balance(user_id, mc_price):
-        new_balance = get_user_balance(user_id)
-    else:
-        new_balance = user_balance
-
     text = (
-        "🛒 <b>Order Created</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🔍 <b>Account Verified</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
         f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
         f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
         f"🌍 Server: <b>{html.escape(server)}</b>\n"
         f"💎 Product: <b>{html.escape(str(display_amount))}</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
-        f"🆔 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
-        f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n\n"
-        f"🪙 လက်ကျန် MC: <b>{new_balance:.3f} MC</b>"
-    )
-    sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
-
-    order_info = (
-        f"🌍 Server: <b>{html.escape(server)}</b>\n"
-        f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
-        f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
-        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
-        f"💎 Product: <b>{html.escape(str(display_amount))}</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n"
+        f"🪙 Balance: <b>{user_balance:.3f} MC</b>\n\n"
+        "⚠️ <b>Confirm လုပ်မှ Order တင်မယ်။</b>"
     )
 
-    uname = f"@{user.username}" if user.username else "—"
-    fname = user.first_name or "User"
-    user_info = (
-        f"👤 Name: <b>{html.escape(fname)}</b>\n"
-        f"🔗 Username: <b>{html.escape(uname)}</b>\n"
-        f"🆔 User ID: <code>{user_id}</code>\n\n"
-    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Confirm", callback_data="ml:confirm"),
+            InlineKeyboardButton("❌ Reject", callback_data="ml:reject"),
+        ]
+    ])
 
-    asyncio.create_task(
-        auto_status_update(
-            context=context,
-            transaction_id=str(transaction_id),
-            user_id=user_id,
-            chat_id=update.effective_chat.id,
-            message_id=sent_msg.message_id,
-            order_info=order_info,
-            product_amount=str(amount_input),
-            user_info=user_info,
-        )
-    )
+    context.user_data["ml_order"] = {
+        "player_id": player_id,
+        "zone_id": zone_id,
+        "server": server,
+        "amount": amount,
+        "display_amount": display_amount,
+        "mc_price": mc_price,
+        "nickname": nickname,
+        "product": matched_product,
+    }
 
-    try:
-        alarm_text = (
-            "🔔 <b>NEW ORDER!</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👤 Name: <b>{html.escape(fname)}</b>\n"
-            f"🔗 Username: <b>{html.escape(uname)}</b>\n"
-            f"🆔 User ID: <code>{user_id}</code>\n\n"
-            f"{order_info}"
-            f"🧾 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
-            f"⏰ Time: <code>{order_time}</code>"
-        )
-        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
-        await context.bot.send_message(chat_id=alert_target, text=alarm_text, parse_mode="HTML")
-    except Exception as e:
-        print("ORDER ALARM ERROR:", e)
+    await checking_msg.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """.pg PLAYER_ID AMOUNT"""
@@ -1507,104 +1505,30 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    if not deduct_user_balance(user_id, mc_price):
-        await update.message.reply_text("❌ Balance ဖြတ်လို့ မရပါ။")
-        return
-
-    checking_msg = await update.message.reply_text(
-        "🔄 <b>Processing...</b>\nServer စမ်းနေပါတယ်...",
-        parse_mode="HTML",
-    )
-
-    skus = PUBG_FALLBACK_SKUS[amount_input]
-    last_error = None
-    data = None
-    error = None
-    used_sku = None
-
-    for idx, sku in enumerate(skus, 1):
-        print(f"🔄 Trying SKU {idx}/{len(skus)}: {sku}")
-        product = {"sku_code": sku, "amount": amount_input, "server": "PUBG"}
-        data, error = create_transaction(product, player_id, "")
-        if not error:
-            used_sku = sku
-            print(f"✅ Success: {sku}")
-            break
-        else:
-            print(f"❌ Failed: {sku} → {error}")
-            last_error = error
-
-    if error:
-        add_user_balance(user_id, mc_price)
-        await checking_msg.edit_text(
-            f"❌ <b>Order Failed</b>\n\n"
-            f"Server အားလုံး Fail ဖြစ်ပါတယ်။\n"
-            f"Balance ပြန်ထည့်ပြီးပါပြီ။\n\n"
-            f"Error: <code>{html.escape(str(last_error)[:150])}</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    result = data.get("data", {})
-    transaction_id = result.get("id", "-")
-    status = result.get("status", "pending")
-    order_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    new_balance = get_user_balance(user_id)
-
     text = (
-        "🛒 <b>PUBG Order Created</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🆔 Player ID: <code>{html.escape(player_id)}</code>\n\n"
-        f"🎮 Product: <b>{html.escape(amount_input)} UC</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
-        f"🆔 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
-        f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n\n"
-        f"🪙 လက်ကျန် MC: <b>{new_balance:.3f} MC</b>"
-    )
-    sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
-
-    order_info = (
-        f"🎮 Game: <b>PUBG Mobile</b>\n"
+        "🔍 <b>PUBG Order Confirm</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🆔 Player ID: <code>{html.escape(player_id)}</code>\n\n"
         f"🎮 Product: <b>{html.escape(amount_input)} UC</b>\n"
         f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n"
-        f"📦 SKU: <code>{html.escape(str(used_sku))}</code>\n\n"
+        f"🪙 Balance: <b>{user_balance:.3f} MC</b>\n\n"
+        "⚠️ <b>Confirm လုပ်မှ Order တင်မယ်။</b>"
     )
 
-    uname = f"@{user.username}" if user.username else "—"
-    fname = user.first_name or "User"
-    user_info = (
-        f"👤 Name: <b>{html.escape(fname)}</b>\n"
-        f"🔗 Username: <b>{html.escape(uname)}</b>\n"
-        f"🆔 User ID: <code>{user_id}</code>\n\n"
-    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Confirm", callback_data="pg:confirm"),
+            InlineKeyboardButton("❌ Reject", callback_data="pg:reject"),
+        ]
+    ])
 
-    asyncio.create_task(
-        auto_status_update(
-            context=context,
-            transaction_id=str(transaction_id),
-            user_id=user_id,
-            chat_id=update.effective_chat.id,
-            message_id=sent_msg.message_id,
-            order_info=order_info,
-            product_amount=str(amount_input),
-            user_info=user_info,
-        )
-    )
+    context.user_data["pg_order"] = {
+        "player_id": player_id,
+        "amount": amount_input,
+        "mc_price": mc_price,
+    }
 
-    try:
-        alarm_text = (
-            "🔔 <b>NEW PUBG ORDER!</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👤 Name: <b>{html.escape(fname)}</b>\n"
-            f"🔗 Username: <b>{html.escape(uname)}</b>\n"
-            f"🆔 User ID: <code>{user_id}</code>\n\n"
-            f"{order_info}"
-            f"🧾 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
-            f"⏰ Time: <code>{order_time}</code>"
-        )
-        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
-        await context.bot.send_message(chat_id=alert_target, text=alarm_text, parse_mode="HTML")
-    except Exception as e:
-        print("ORDER ALARM ERROR:", e)
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """.tg TARGET AMOUNT"""
@@ -1672,10 +1596,7 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mc_price = get_mc_price(server, amount, matched_product)
 
     if mc_price is None:
-        await update.message.reply_text(
-            f"⚠️ <b>Price မသတ်မှတ်ရသေးပါ။</b>\n\nProduct: <code>{html.escape(str(display_amount))}</code>",
-            parse_mode="HTML",
-        )
+        await update.message.reply_text("⚠️ <b>Price မသတ်မှတ်ရသေးပါ။</b>", parse_mode="HTML")
         return
 
     user_balance = get_user_balance(user_id)
@@ -1688,95 +1609,40 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    checking_msg = await update.message.reply_text("🛒 <b>Creating Order...</b>", parse_mode="HTML")
-
-    product = dict(matched_product)
-    data, error = create_transaction(product, target, "")
-
-    if error:
-        await checking_msg.edit_text(f"❌ <b>Order Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
-        return
-
-    result = data.get("data", {})
-    transaction_id = result.get("id", "-")
-    status = result.get("status", "pending")
-    serial_number = result.get("serial_number", "")
-    order_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    if deduct_user_balance(user_id, mc_price):
-        new_balance = get_user_balance(user_id)
-    else:
-        new_balance = user_balance
-
     if server == "TGP":
         emoji = "👑"
         label = "Telegram Premium"
-        code_section = ""
-        if serial_number:
-            code_section = f"\n🎁 <b>Gift Code:</b>\n<code>{html.escape(str(serial_number))}</code>\n"
     else:
         emoji = "⭐"
         label = "Telegram Stars"
-        code_section = ""
 
     text = (
-        f"🛒 <b>{label} Order Created</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🔍 <b>{label} Order Confirm</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🎯 Target: <code>{html.escape(target)}</code>\n\n"
         f"{emoji} Product: <b>{html.escape(str(display_amount))}</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
-        f"🆔 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
-        f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n"
-        f"{code_section}\n"
-        f"🪙 လက်ကျန် MC: <b>{new_balance:.3f} MC</b>"
-    )
-    sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
-
-    order_info = (
-        f"⭐ Game: <b>{label}</b>\n"
-        f"🎯 Target: <code>{html.escape(target)}</code>\n\n"
-        f"{emoji} Product: <b>{html.escape(str(display_amount))}</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n"
+        f"🪙 Balance: <b>{user_balance:.3f} MC</b>\n\n"
+        "⚠️ <b>Confirm လုပ်မှ Order တင်မယ်။</b>"
     )
 
-    uname = f"@{user.username}" if user.username else "—"
-    fname = user.first_name or "User"
-    user_info = (
-        f"👤 Name: <b>{html.escape(fname)}</b>\n"
-        f"🔗 Username: <b>{html.escape(uname)}</b>\n"
-        f"🆔 User ID: <code>{user_id}</code>\n\n"
-    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Confirm", callback_data="tg:confirm"),
+            InlineKeyboardButton("❌ Reject", callback_data="tg:reject"),
+        ]
+    ])
 
-    asyncio.create_task(
-        auto_status_update(
-            context=context,
-            transaction_id=str(transaction_id),
-            user_id=user_id,
-            chat_id=update.effective_chat.id,
-            message_id=sent_msg.message_id,
-            order_info=order_info,
-            product_amount=str(amount_input),
-            user_info=user_info,
-        )
-    )
+    context.user_data["tg_order"] = {
+        "target": target,
+        "server": server,
+        "amount": amount,
+        "display_amount": display_amount,
+        "mc_price": mc_price,
+        "product": matched_product,
+    }
 
-    try:
-        alarm_text = (
-            f"🔔 <b>NEW {label.upper()} ORDER!</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👤 Name: <b>{html.escape(fname)}</b>\n"
-            f"🔗 Username: <b>{html.escape(uname)}</b>\n"
-            f"🆔 User ID: <code>{user_id}</code>\n\n"
-            f"{order_info}"
-        )
-        if serial_number:
-            alarm_text += f"🎁 Gift Code: <code>{html.escape(str(serial_number))}</code>\n\n"
-        alarm_text += (
-            f"🧾 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
-            f"⏰ Time: <code>{order_time}</code>"
-        )
-        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
-        await context.bot.send_message(chat_id=alert_target, text=alarm_text, parse_mode="HTML")
-    except Exception as e:
-        print("ORDER ALARM ERROR:", e)
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 def create_transaction(product, player_id, zone_id):
@@ -2196,6 +2062,355 @@ async def list_products_command(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
+# ============================================================
+# ✅ CONFIRM FUNCTIONS
+# ============================================================
+
+async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    order = context.user_data.get("ml_order")
+    if not order:
+        await query.edit_message_text("❌ <b>Order မတွေ့ပါ။</b>\n\n/start ပြန်စပါ။", parse_mode="HTML")
+        return
+
+    user = query.from_user
+    user_id = user.id
+
+    player_id = order["player_id"]
+    zone_id = order["zone_id"]
+    server = order["server"]
+    amount = order["amount"]
+    display_amount = order["display_amount"]
+    mc_price = order["mc_price"]
+    nickname = order["nickname"]
+    matched_product = order["product"]
+
+    user_balance = get_user_balance(user_id)
+    if user_balance < mc_price:
+        await query.edit_message_text(
+            f"❌ <b>Balance မလုံလောက်ပါ။</b>\n\n"
+            f"🪙 လက်ရှိ: <b>{user_balance:.3f} MC</b>",
+            parse_mode="HTML",
+        )
+        context.user_data.pop("ml_order", None)
+        return
+
+    await query.edit_message_text("🛒 <b>Creating Order...</b>", parse_mode="HTML")
+
+    product = dict(matched_product)
+    data, error = create_transaction(product, player_id, zone_id)
+
+    if error:
+        await query.edit_message_text(f"❌ <b>Order Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
+        context.user_data.pop("ml_order", None)
+        return
+
+    result = data.get("data", {})
+    transaction_id = result.get("id", "-")
+    status = result.get("status", "pending")
+    order_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if deduct_user_balance(user_id, mc_price):
+        new_balance = get_user_balance(user_id)
+    else:
+        new_balance = user_balance
+
+    text = (
+        "🛒 <b>Order Created</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
+        f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
+        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
+        f"🌍 Server: <b>{html.escape(server)}</b>\n"
+        f"💎 Product: <b>{html.escape(str(display_amount))}</b>\n"
+        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+        f"🆔 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
+        f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n\n"
+        f"🪙 လက်ကျန် MC: <b>{new_balance:.3f} MC</b>"
+    )
+    sent_msg = await query.edit_message_text(text, parse_mode="HTML")
+
+    order_info = (
+        f"🌍 Server: <b>{html.escape(server)}</b>\n"
+        f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
+        f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
+        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
+        f"💎 Product: <b>{html.escape(str(display_amount))}</b>\n"
+        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+    )
+
+    uname = f"@{user.username}" if user.username else "—"
+    fname = user.first_name or "User"
+    user_info = (
+        f"👤 Name: <b>{html.escape(fname)}</b>\n"
+        f"🔗 Username: <b>{html.escape(uname)}</b>\n"
+        f"🆔 User ID: <code>{user_id}</code>\n\n"
+    )
+
+    asyncio.create_task(
+        auto_status_update(
+            context=context,
+            transaction_id=str(transaction_id),
+            user_id=user_id,
+            chat_id=query.message.chat_id,
+            message_id=sent_msg.message_id,
+            order_info=order_info,
+            product_amount=str(amount),
+            user_info=user_info,
+        )
+    )
+
+    try:
+        alarm_text = (
+            "🔔 <b>NEW ORDER!</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👤 Name: <b>{html.escape(fname)}</b>\n"
+            f"🔗 Username: <b>{html.escape(uname)}</b>\n"
+            f"🆔 User ID: <code>{user_id}</code>\n\n"
+            f"{order_info}"
+            f"🧾 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
+            f"⏰ Time: <code>{order_time}</code>"
+        )
+        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
+        await context.bot.send_message(chat_id=alert_target, text=alarm_text, parse_mode="HTML")
+    except Exception as e:
+        print("ORDER ALARM ERROR:", e)
+
+    context.user_data.pop("ml_order", None)
+
+
+async def handle_pg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    order = context.user_data.get("pg_order")
+    if not order:
+        await query.edit_message_text("❌ <b>Order မတွေ့ပါ။</b>", parse_mode="HTML")
+        return
+
+    user = query.from_user
+    user_id = user.id
+
+    player_id = order["player_id"]
+    amount_input = order["amount"]
+    mc_price = order["mc_price"]
+
+    user_balance = get_user_balance(user_id)
+    if user_balance < mc_price:
+        await query.edit_message_text("❌ <b>Balance မလုံလောက်ပါ။</b>", parse_mode="HTML")
+        context.user_data.pop("pg_order", None)
+        return
+
+    if not deduct_user_balance(user_id, mc_price):
+        await query.edit_message_text("❌ Balance ဖြတ်လို့ မရပါ。")
+        return
+
+    await query.edit_message_text(
+        "🔄 <b>Processing...</b>\nServer စမ်းနေပါတယ်...",
+        parse_mode="HTML",
+    )
+
+    skus = PUBG_FALLBACK_SKUS[amount_input]
+    last_error = None
+    data = None
+    error = None
+    used_sku = None
+
+    for idx, sku in enumerate(skus, 1):
+        print(f"🔄 Trying SKU {idx}/{len(skus)}: {sku}")
+        product = {"sku_code": sku, "amount": amount_input, "server": "PUBG"}
+        data, error = create_transaction(product, player_id, "")
+        if not error:
+            used_sku = sku
+            break
+        else:
+            last_error = error
+
+    if error:
+        add_user_balance(user_id, mc_price)
+        await query.edit_message_text(
+            f"❌ <b>Order Failed</b>\n\nBalance ပြန်ထည့်ပြီးပါပြီ။",
+            parse_mode="HTML",
+        )
+        context.user_data.pop("pg_order", None)
+        return
+
+    result = data.get("data", {})
+    transaction_id = result.get("id", "-")
+    status = result.get("status", "pending")
+    order_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    new_balance = get_user_balance(user_id)
+
+    text = (
+        "🛒 <b>PUBG Order Created</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🆔 Player ID: <code>{html.escape(player_id)}</code>\n\n"
+        f"🎮 Product: <b>{html.escape(amount_input)} UC</b>\n"
+        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+        f"🆔 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
+        f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n\n"
+        f"🪙 လက်ကျန် MC: <b>{new_balance:.3f} MC</b>"
+    )
+    sent_msg = await query.edit_message_text(text, parse_mode="HTML")
+
+    order_info = (
+        f"🎮 Game: <b>PUBG Mobile</b>\n"
+        f"🆔 Player ID: <code>{html.escape(player_id)}</code>\n\n"
+        f"🎮 Product: <b>{html.escape(amount_input)} UC</b>\n"
+        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n"
+        f"📦 SKU: <code>{html.escape(str(used_sku))}</code>\n\n"
+    )
+
+    uname = f"@{user.username}" if user.username else "—"
+    fname = user.first_name or "User"
+    user_info = (
+        f"👤 Name: <b>{html.escape(fname)}</b>\n"
+        f"🔗 Username: <b>{html.escape(uname)}</b>\n"
+        f"🆔 User ID: <code>{user_id}</code>\n\n"
+    )
+
+    asyncio.create_task(
+        auto_status_update(
+            context=context,
+            transaction_id=str(transaction_id),
+            user_id=user_id,
+            chat_id=query.message.chat_id,
+            message_id=sent_msg.message_id,
+            order_info=order_info,
+            product_amount=str(amount_input),
+            user_info=user_info,
+        )
+    )
+
+    try:
+        alarm_text = (
+            "🔔 <b>NEW PUBG ORDER!</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👤 Name: <b>{html.escape(fname)}</b>\n"
+            f"🔗 Username: <b>{html.escape(uname)}</b>\n"
+            f"🆔 User ID: <code>{user_id}</code>\n\n"
+            f"{order_info}"
+            f"🧾 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
+            f"⏰ Time: <code>{order_time}</code>"
+        )
+        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
+        await context.bot.send_message(chat_id=alert_target, text=alarm_text, parse_mode="HTML")
+    except Exception as e:
+        print("ORDER ALARM ERROR:", e)
+
+    context.user_data.pop("pg_order", None)
+
+
+async def handle_tg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    order = context.user_data.get("tg_order")
+    if not order:
+        await query.edit_message_text("❌ <b>Order မတွေ့ပါ။</b>", parse_mode="HTML")
+        return
+
+    user = query.from_user
+    user_id = user.id
+
+    target = order["target"]
+    server = order["server"]
+    amount = order["amount"]
+    display_amount = order["display_amount"]
+    mc_price = order["mc_price"]
+    matched_product = order["product"]
+
+    user_balance = get_user_balance(user_id)
+    if user_balance < mc_price:
+        await query.edit_message_text("❌ <b>Balance မလုံလောက်ပါ။</b>", parse_mode="HTML")
+        context.user_data.pop("tg_order", None)
+        return
+
+    await query.edit_message_text("🛒 <b>Creating Order...</b>", parse_mode="HTML")
+
+    product = dict(matched_product)
+    data, error = create_transaction(product, target, "")
+
+    if error:
+        await query.edit_message_text(f"❌ <b>Order Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
+        context.user_data.pop("tg_order", None)
+        return
+
+    result = data.get("data", {})
+    transaction_id = result.get("id", "-")
+    status = result.get("status", "pending")
+    serial_number = result.get("serial_number", "")
+    order_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if deduct_user_balance(user_id, mc_price):
+        new_balance = get_user_balance(user_id)
+    else:
+        new_balance = user_balance
+
+    if server == "TGP":
+        emoji = "👑"
+        label = "Telegram Premium"
+        code_section = ""
+        if serial_number:
+            code_section = f"\n🎁 <b>Gift Code:</b>\n<code>{html.escape(str(serial_number))}</code>\n"
+    else:
+        emoji = "⭐"
+        label = "Telegram Stars"
+        code_section = ""
+
+    text = (
+        f"🛒 <b>{label} Order Created</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎯 Target: <code>{html.escape(target)}</code>\n\n"
+        f"{emoji} Product: <b>{html.escape(str(display_amount))}</b>\n"
+        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+        f"🆔 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
+        f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n"
+        f"{code_section}\n"
+        f"🪙 လက်ကျန် MC: <b>{new_balance:.3f} MC</b>"
+    )
+    sent_msg = await query.edit_message_text(text, parse_mode="HTML")
+
+    order_info = (
+        f"⭐ Game: <b>{label}</b>\n"
+        f"🎯 Target: <code>{html.escape(target)}</code>\n\n"
+        f"{emoji} Product: <b>{html.escape(str(display_amount))}</b>\n"
+        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+    )
+
+    uname = f"@{user.username}" if user.username else "—"
+    fname = user.first_name or "User"
+    user_info = (
+        f"👤 Name: <b>{html.escape(fname)}</b>\n"
+        f"🔗 Username: <b>{html.escape(uname)}</b>\n"
+        f"🆔 User ID: <code>{user_id}</code>\n\n"
+    )
+
+    asyncio.create_task(
+        auto_status_update(
+            context=context,
+            transaction_id=str(transaction_id),
+            user_id=user_id,
+            chat_id=query.message.chat_id,
+            message_id=sent_msg.message_id,
+            order_info=order_info,
+            product_amount=str(amount),
+            user_info=user_info,
+        )
+    )
+
+    try:
+        alarm_text = (
+            f"🔔 <b>NEW {label.upper()} ORDER!</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👤 Name: <b>{html.escape(fname)}</b>\n"
+            f"🔗 Username: <b>{html.escape(uname)}</b>\n"
+            f"🆔 User ID: <code>{user_id}</code>\n\n"
+            f"{order_info}"
+        )
+        if serial_number:
+            alarm_text += f"🎁 Gift Code: <code>{html.escape(str(serial_number))}</code>\n\n"
+        alarm_text += (
+            f"🧾 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
+            f"⏰ Time: <code>{order_time}</code>"
+        )
+        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
+        await context.bot.send_message(chat_id=alert_target, text=alarm_text, parse_mode="HTML")
+    except Exception as e:
+        print("ORDER ALARM ERROR:", e)
+
+    context.user_data.pop("tg_order", None)
+
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
@@ -2205,6 +2420,42 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "back:servers":
         await query.edit_message_text("🌍 Server ရွေးပါ။", reply_markup=server_keyboard())
+        return
+
+    # ✅ ML Confirm/Reject
+    if data == "ml:confirm":
+        await handle_ml_confirm(update, context)
+        return
+    if data == "ml:reject":
+        context.user_data.pop("ml_order", None)
+        await query.edit_message_text(
+            "❌ <b>Order Cancelled</b>\n\n/start နဲ့ ပြန်စပါ။",
+            parse_mode="HTML",
+        )
+        return
+
+    # ✅ PG Confirm/Reject
+    if data == "pg:confirm":
+        await handle_pg_confirm(update, context)
+        return
+    if data == "pg:reject":
+        context.user_data.pop("pg_order", None)
+        await query.edit_message_text(
+            "❌ <b>PUBG Order Cancelled</b>\n\n/start နဲ့ ပြန်စပါ။",
+            parse_mode="HTML",
+        )
+        return
+
+    # ✅ TG Confirm/Reject
+    if data == "tg:confirm":
+        await handle_tg_confirm(update, context)
+        return
+    if data == "tg:reject":
+        context.user_data.pop("tg_order", None)
+        await query.edit_message_text(
+            "❌ <b>Telegram Order Cancelled</b>\n\n/start နဲ့ ပြန်စပါ။",
+            parse_mode="HTML",
+        )
         return
 
     if data.startswith("reply:"):
@@ -2413,3 +2664,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    
+
+    
