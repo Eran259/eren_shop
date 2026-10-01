@@ -74,7 +74,6 @@ SERVER_FLAGS = {
     "Telegram Premium": "👑",
 }
 
-# ✅ PUBG Fallback SKUs (Server 12A → 7 → 13 → 11 → 10)
 PUBG_FALLBACK_SKUS = {
     "60": [
         "PUBGMGL60U-S12A",
@@ -101,6 +100,7 @@ MANUAL_PRODUCT_DB = os.path.join(DATA_DIR, "manual_product.db")
 
 print(f"📁 DATA_DIR: {DATA_DIR}")
 print(f"🔔 ALERT_CHAT_ID: {ALERT_CHAT_ID}")
+print(f"🧪 MELO_SANDBOX: {MELO_SANDBOX}")
 
 
 def mc_to_ks(mc_amount):
@@ -666,20 +666,44 @@ async def check_transaction_status(transaction_id):
     return result.get("status", "unknown"), None
 
 
+async def get_transaction_detail(transaction_id):
+    """Transaction Detail (Price Charged) ရယူ"""
+    data, error = api_get(f"/api/v1/h2h/transaction/{transaction_id}")
+    if error:
+        return None, error
+    return data.get("data", {}), None
+
+
 async def auto_status_update(context, transaction_id, user_id, chat_id, message_id, max_wait=600):
-    """Auto Status Check — ၁၅ စက္ကန့် တစ်ခါ"""
+    """Auto Status Check — ၁၅ စက္ကန့် တစ်ခါ + Auto Refund"""
     start_time = time.time()
     check_interval = 15
+    refunded = False
+    price_charged = 0
 
     while (time.time() - start_time) < max_wait:
         await asyncio.sleep(check_interval)
-
         status, error = await check_transaction_status(transaction_id)
         if error:
             continue
 
         if status and status.lower() in ("success", "failed", "canceled", "refunded"):
             emoji = "✅" if status.lower() == "success" else "❌"
+
+            # ✅ AUTO REFUND
+            if status.lower() in ("failed", "canceled", "refunded") and not refunded:
+                detail, err = await get_transaction_detail(transaction_id)
+                if not err and detail:
+                    try:
+                        price_charged = float(detail.get("price_charged", 0))
+                    except Exception:
+                        price_charged = 0
+
+                    if price_charged > 0:
+                        add_user_balance(user_id, price_charged)
+                        refunded = True
+                        print(f"✅ Refunded {price_charged} MC to {user_id}")
+
             try:
                 text = (
                     f"{emoji} <b>Order {status.upper()}</b>\n"
@@ -687,6 +711,11 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
                     f"🆔 Trx: <code>{transaction_id}</code>\n"
                     f"⏳ Status: <b>{status.upper()}</b>"
                 )
+                if status.lower() in ("failed", "canceled", "refunded"):
+                    text += f"\n\n💰 <b>MC ပြန်ထည့်ပြီးပါပြီ။</b>"
+                    if price_charged > 0:
+                        text += f"\n🪙 Refunded: <b>{price_charged:.3f} MC</b>"
+
                 await context.bot.edit_message_text(
                     chat_id=chat_id, message_id=message_id,
                     text=text, parse_mode="HTML",
@@ -694,17 +723,19 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
             except Exception as e:
                 print("STATUS UPDATE ERROR:", e)
 
-            # ✅ Alert Group ဆီ ပို့
             try:
                 alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
+                alert_text = (
+                    f"{emoji} <b>Transaction {status.upper()}</b>\n\n"
+                    f"🆔 Trx: <code>{transaction_id}</code>\n"
+                    f"👤 User: <code>{user_id}</code>"
+                )
+                if status.lower() in ("failed", "canceled", "refunded"):
+                    if price_charged > 0:
+                        alert_text += f"\n💰 Refunded: <b>{price_charged:.3f} MC</b>"
+
                 await context.bot.send_message(
-                    chat_id=alert_target,
-                    text=(
-                        f"{emoji} <b>Transaction {status.upper()}</b>\n\n"
-                        f"🆔 Trx: <code>{transaction_id}</code>\n"
-                        f"👤 User: <code>{user_id}</code>"
-                    ),
-                    parse_mode="HTML",
+                    chat_id=alert_target, text=alert_text, parse_mode="HTML",
                 )
             except Exception as e:
                 print("ALERT STATUS ERROR:", e)
@@ -1055,7 +1086,8 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 <b>Admin Panel</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🪙 Melostore MC: <b>{balance:,.2f} MC</b>\n"
         f"💵 USD: <b>${usd:,.2f}</b>\n\n"
-        f"🔔 Alert Group: <code>{ALERT_CHAT_ID}</code>\n\n"
+        f"🔔 Alert Group: <code>{ALERT_CHAT_ID}</code>\n"
+        f"🧪 Sandbox: <b>{MELO_SANDBOX}</b>\n\n"
         "💡 <b>Commands</b>\n"
         "/addbalance USER_ID MC\n"
         "/checkbalance USER_ID\n"
@@ -1333,6 +1365,7 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
 
+    # ✅ Auto Status Check
     asyncio.create_task(
         auto_status_update(
             context=context,
@@ -1343,7 +1376,6 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     )
 
-    # ✅ Alert Group ဆီ ပို့
     try:
         username = f"@{user.username}" if user.username else "—"
         first_name = user.first_name or "User"
@@ -1472,6 +1504,7 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
 
+    # ✅ Auto Status Check
     asyncio.create_task(
         auto_status_update(
             context=context,
@@ -1502,7 +1535,7 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print("ORDER ALARM ERROR:", e)
 
-async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """.tg TARGET AMOUNT"""
     if not update.message:
         return
@@ -1627,6 +1660,7 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     sent_msg = await checking_msg.edit_text(text, parse_mode="HTML")
 
+    # ✅ Auto Status Check
     asyncio.create_task(
         auto_status_update(
             context=context,
@@ -2224,6 +2258,7 @@ async def post_init(application: Application):
     print(f"📁 {DATA_DIR}")
     print(f"💹 MC Margin: {MC_PROFIT_MARGIN}")
     print(f"🔔 Alert Group: {ALERT_CHAT_ID}")
+    print(f"🧪 Sandbox: {MELO_SANDBOX}")
 
 
 async def post_shutdown(application: Application):
@@ -2294,5 +2329,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    
