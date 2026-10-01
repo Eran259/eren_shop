@@ -64,14 +64,18 @@ SERVER_MAP = {
     "ttr": "Turkey", "tr": "Turkey", "turkey": "Turkey",
     "php": "Philippines", "ph": "Philippines", "philippines": "Philippines",
     "brl": "Brazil", "br": "Brazil", "brazil": "Brazil",
+    # ✅ New Server Names
+    "pubg": "PUBG",
+    "tgs": "TGS",
+    "tgp": "TGP",
 }
 
 SERVER_FLAGS = {
     "Global": "🌍", "Malaysia": "🇲🇾", "Singapore": "🇸🇬",
     "Turkey": "🇹🇷", "Philippines": "🇵🇭", "Brazil": "🇧🇷",
-    "PUBG Global": "🎮",
-    "Telegram Stars": "⭐",
-    "Telegram Premium": "👑",
+    "PUBG": "🎮",
+    "TGS": "⭐",
+    "TGP": "👑",
 }
 
 PUBG_FALLBACK_SKUS = {
@@ -361,9 +365,9 @@ def get_manual_products_for_server(server):
     for srv, amount, sku, display_name in rows:
         if srv in ("Global", "Malaysia", "Singapore", "Turkey", "Philippines", "Brazil"):
             game_type = "MLBB"
-        elif "PUBG" in srv:
+        elif srv == "PUBG":
             game_type = "PUBG"
-        elif "Telegram" in srv:
+        elif srv in ("TGS", "TGP"):
             game_type = "Telegram"
         else:
             game_type = "MLBB"
@@ -533,9 +537,9 @@ async def handle_access_callback(update, context):
 PRODUCT_CACHE = {
     "Global": [], "Malaysia": [], "Singapore": [],
     "Turkey": [], "Philippines": [], "Brazil": [],
-    "PUBG Global": [],
-    "Telegram Stars": [],
-    "Telegram Premium": [],
+    "PUBG": [],
+    "TGS": [],
+    "TGP": [],
 }
 LAST_PRODUCTS_LOAD = 0
 PRODUCT_CACHE_TTL = 300
@@ -716,7 +720,7 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
             info_text = order_info if order_info else ""
             new_balance = get_user_balance(user_id)
 
-            # ✅ User ဆီ Update (User Info မပါ)
+            # ✅ User ဆီ Update
             try:
                 text = (
                     f"{emoji} <b>Order {status.upper()}</b>\n"
@@ -737,7 +741,7 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
             except Exception as e:
                 print("STATUS UPDATE ERROR:", e)
 
-            # ✅ Alert Group ဆီ (User Info + Order Info)
+            # ✅ Alert Group ဆီ
             try:
                 alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
                 user_section = user_info if user_info else ""
@@ -819,15 +823,15 @@ def load_server_products(server):
                 product_server = "Global"
 
         elif game_type == "PUBG":
-            product_server = "PUBG Global"
+            product_server = "PUBG"
 
         elif game_type == "Telegram":
             if "premium" in name_text or "gift card" in name_text or "gazette" in name_text:
-                product_server = "Telegram Premium"
+                product_server = "TGP"
             elif "star" in name_text:
-                product_server = "Telegram Stars"
+                product_server = "TGS"
             else:
-                product_server = "Telegram Stars"
+                product_server = "TGS"
 
         if product_server != server:
             continue
@@ -840,7 +844,7 @@ def load_server_products(server):
             amount = num_match.group(1) if num_match else name.strip()
             display_name = name.strip()
         elif game_type == "Telegram":
-            if product_server == "Telegram Premium":
+            if product_server == "TGP":
                 amount = name.strip()
                 display_name = name.strip()
             else:
@@ -944,9 +948,9 @@ def server_keyboard():
             [InlineKeyboardButton("🇹🇷 Turkey Server", callback_data="server:Turkey")],
             [InlineKeyboardButton("🇵🇭 Philippines Server", callback_data="server:Philippines")],
             [InlineKeyboardButton("🇧🇷 Brazil Server", callback_data="server:Brazil")],
-            [InlineKeyboardButton("🎮 PUBG Global", callback_data="server:PUBG Global")],
-            [InlineKeyboardButton("⭐ Telegram Stars", callback_data="server:Telegram Stars")],
-            [InlineKeyboardButton("👑 Telegram Premium", callback_data="server:Telegram Premium")],
+            [InlineKeyboardButton("🎮 PUBG", callback_data="server:PUBG")],
+            [InlineKeyboardButton("⭐ Telegram Stars", callback_data="server:TGS")],
+            [InlineKeyboardButton("👑 Telegram Premium", callback_data="server:TGP")],
         ]
     )
 
@@ -970,7 +974,7 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=11):
         if game_type == "PUBG":
             label = f"🎮 {display_amount} • {price_text}"
         elif game_type == "Telegram":
-            if server == "Telegram Premium":
+            if server == "TGP":
                 label = f"👑 {display_amount} • {price_text}"
             else:
                 label = f"⭐ {display_amount} • {price_text}"
@@ -1102,20 +1106,43 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     usd = info.get("h2h_balance_usd", 0)
 
     text = (
-        "📊 <b>Admin Panel</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📊 <b>Admin Panel</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🪙 Melostore MC: <b>{balance:,.2f} MC</b>\n"
         f"💵 USD: <b>${usd:,.2f}</b>\n\n"
         f"🔔 Alert Group: <code>{ALERT_CHAT_ID}</code>\n"
         f"🧪 Sandbox: <b>{MELO_SANDBOX}</b>\n\n"
-        "💡 <b>Commands</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 <b>Balance Commands</b>\n"
         "/addbalance USER_ID MC\n"
-        "/checkbalance USER_ID\n"
+        "/checkbalance USER_ID\n\n"
+        "💰 <b>Price Commands</b>\n"
         "/setprice SERVER AMOUNT MC\n"
         "/delprice SERVER AMOUNT\n"
-        "/listprices [SERVER]\n"
+        "/listprices [SERVER]\n\n"
+        "📦 <b>Product Commands</b>\n"
         "/addproduct SERVER AMOUNT [SKU]\n"
         "/delproduct SERVER AMOUNT\n"
-        "/listproducts [SERVER]\n"
+        "/listproducts [SERVER]\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🌍 <b>Server Names</b>\n"
+        "💎 MLBB: <code>Global</code>, <code>Malaysia</code>, "
+        "<code>Singapore</code>, <code>Turkey</code>, "
+        "<code>Philippines</code>, <code>Brazil</code>\n\n"
+        "🎮 PUBG: <code>PUBG</code>\n"
+        "⭐ Telegram Stars: <code>TGS</code>\n"
+        "👑 Telegram Premium: <code>TGP</code>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📌 <b>ဥပမာ:</b>\n"
+        "<code>/setprice Global 60 16.602</code>\n"
+        "<code>/setprice PUBG 60 16.602</code>\n"
+        "<code>/setprice TGS 50 15.699</code>\n"
+        "<code>/setprice TGP 3M 226.061</code>\n\n"
+        "<code>/addproduct Global 60 MLGL60D-S1</code>\n"
+        "<code>/addproduct PUBG 60 PUBGMGL60U-S12A</code>\n"
+        "<code>/addproduct TGS 50 TS50TS-S1</code>\n"
+        "<code>/addproduct TGP 3M TPGC3M0-S7</code>\n\n"
+        "💾 <b>Backup</b>\n"
         "/backup\n/restore"
     )
     await update.message.reply_text(text, parse_mode="HTML")
@@ -1221,7 +1248,7 @@ async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_
         if game_type == "PUBG":
             lines.append(f"  🎮 <b>{html.escape(str(display_amount))}</b> • {price_text}")
         elif game_type == "Telegram":
-            if server == "Telegram Premium":
+            if server == "TGP":
                 lines.append(f"  👑 <b>{html.escape(str(display_amount))}</b> • {price_text}")
             else:
                 lines.append(f"  ⭐ <b>{html.escape(str(display_amount))}</b> • {price_text}")
@@ -1231,17 +1258,17 @@ async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_
     lines.append("")
     lines.append("━━━━━━━━━━━━━━━━━━━━")
 
-    if server == "PUBG Global":
+    if server == "PUBG":
         lines.append("")
         lines.append("💡 <b>Order:</b> <code>.pg PLAYER_ID AMOUNT</code>")
         lines.append("")
         lines.append(f"📌 <b>ဥပမာ:</b> <code>.pg 5123456789 {unique_products[0].get('amount', '60')}</code>")
-    elif server == "Telegram Stars":
+    elif server == "TGS":
         lines.append("")
         lines.append("💡 <b>Order (Direct):</b> <code>.tg TARGET AMOUNT</code>")
         lines.append("")
         lines.append(f"📌 <b>ဥပမာ:</b> <code>.tg @username {unique_products[0].get('amount', '50')}</code>")
-    elif server == "Telegram Premium":
+    elif server == "TGP":
         lines.append("")
         lines.append("💡 <b>Order (Gift Card):</b> <code>.tg TARGET AMOUNT</code>")
         lines.append("")
@@ -1264,7 +1291,7 @@ async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_
     else:
         await update.message.reply_text(text, parse_mode="HTML")
 
-async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """.ml PLAYER_ID ZONE_ID [SERVER] AMOUNT"""
     if not update.message:
         return
@@ -1429,7 +1456,7 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print("ORDER ALARM ERROR:", e)
 
-async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """.pg PLAYER_ID AMOUNT"""
     if not update.message:
         return
@@ -1465,7 +1492,7 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    mc_price = get_mc_price("PUBG Global", amount_input, None)
+    mc_price = get_mc_price("PUBG", amount_input, None)
     if mc_price is None:
         await update.message.reply_text("⚠️ <b>Price မသတ်မှတ်ရသေးပါ။</b>", parse_mode="HTML")
         return
@@ -1497,7 +1524,7 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for idx, sku in enumerate(skus, 1):
         print(f"🔄 Trying SKU {idx}/{len(skus)}: {sku}")
-        product = {"sku_code": sku, "amount": amount_input, "server": "PUBG Global"}
+        product = {"sku_code": sku, "amount": amount_input, "server": "PUBG"}
         data, error = create_transaction(product, player_id, "")
         if not error:
             used_sku = sku
@@ -1579,7 +1606,7 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print("ORDER ALARM ERROR:", e)
 
-async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """.tg TARGET AMOUNT"""
     if not update.message:
         return
@@ -1606,7 +1633,7 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     matched_product = None
     matched_server = None
 
-    for srv in ["Telegram Stars", "Telegram Premium"]:
+    for srv in ["TGS", "TGP"]:
         products, error = ensure_server_products(srv)
         if not products:
             continue
@@ -1624,8 +1651,8 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
 
     if not matched_product:
-        star_products, _ = ensure_server_products("Telegram Stars")
-        prem_products, _ = ensure_server_products("Telegram Premium")
+        star_products, _ = ensure_server_products("TGS")
+        prem_products, _ = ensure_server_products("TGP")
 
         star_amounts = sorted(set(str(p.get("amount", "?")) for p in star_products))
         prem_names = sorted(set(str(p.get("display_name", "?")) for p in prem_products))
@@ -1681,7 +1708,7 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         new_balance = user_balance
 
-    if server == "Telegram Premium":
+    if server == "TGP":
         emoji = "👑"
         label = "Telegram Premium"
         code_section = ""
@@ -1866,13 +1893,13 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await server_product_shortcut(update, context, "Global")
         return
     if text == "🎮 PUBG UC":
-        await server_product_shortcut(update, context, "PUBG Global")
+        await server_product_shortcut(update, context, "PUBG")
         return
     if text == "⭐ Telegram Stars":
-        await server_product_shortcut(update, context, "Telegram Stars")
+        await server_product_shortcut(update, context, "TGS")
         return
     if text == "👑 Telegram Premium":
-        await server_product_shortcut(update, context, "Telegram Premium")
+        await server_product_shortcut(update, context, "TGP")
         return
 
     if text == "🌍 Global":
@@ -2240,7 +2267,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = query.from_user.id
         user_balance = get_user_balance(user_id)
 
-        if server in ("Telegram Stars", "Telegram Premium"):
+        if server in ("TGS", "TGP"):
             prompt = "🎯 <b>Telegram Username</b> ထည့်ပါ။\n\nဥပမာ: <code>@username</code>"
         else:
             prompt = "🆔 <b>Player ID</b> ထည့်ပါ။\nဥပမာ: <code>12345678</code>"
