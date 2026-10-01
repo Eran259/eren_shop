@@ -241,7 +241,7 @@ def validate_license_key(license_key):
     except Exception:
         return None
 
-def init_user_api_db():
+    def init_user_api_db():
     conn = sqlite3.connect(USER_API_DB)
     conn.execute("""CREATE TABLE IF NOT EXISTS user_api (
         user_id INTEGER PRIMARY KEY,
@@ -921,14 +921,14 @@ def ensure_server_products(server):
 def main_keyboard():
     return ReplyKeyboardMarkup(
         [
-            ["💎 MLBB Diamonds", "🎮 PUBG UC"],
-            ["⭐ Telegram Stars", "👑 Telegram Premium"],
+            ["💎 MLBB Diamonds", "🔍 Check ML ID"],
+            ["🎮 PUBG UC", "⭐ Telegram Stars"],
+            ["👑 Telegram Premium", "💰 My Balance"],
             ["🌍 Global", "🇲🇾 Malaysia"],
             ["🇸🇬 Singapore", "🇹🇷 Turkey"],
             ["🇵🇭 Philippines", "🇧🇷 Brazil"],
-            ["💰 My Balance", "💳 Deposit"],
-            ["📞 Contact Admin", "⚙️ Admin Panel"],
-            ["🔌 API Status"],
+            ["💳 Deposit", "📞 Contact Admin"],
+            ["⚙️ Admin Panel", "🔌 API Status"],
         ],
         resize_keyboard=True,
     )
@@ -1007,8 +1007,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👑 <b>Status:</b> Admin\n"
             f"🪙 <b>Balance:</b> {balance:.3f} MC\n\n"
             "🛒 <b>Services</b>\n"
-            "💎 MLBB Diamonds\n🎮 PUBG UC\n"
-            "⭐ Telegram Stars\n💰 My Balance\n💳 Deposit"
+            "💎 MLBB Diamonds\n🔍 Check ML ID\n"
+            "🎮 PUBG UC\n⭐ Telegram Stars\n"
+            "💰 My Balance\n💳 Deposit"
         )
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
         return
@@ -1017,7 +1018,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if status == "approved":
         status_text = "✅ <b>Active</b>"
-        footer = "🛒 <b>Services</b>\n💎 MLBB Diamonds\n🎮 PUBG UC\n⭐ Telegram Stars\n💰 My Balance\n💳 Deposit"
+        footer = "🛒 <b>Services</b>\n💎 MLBB Diamonds\n🔍 Check ML ID\n🎮 PUBG UC\n⭐ Telegram Stars\n💰 My Balance\n💳 Deposit"
         show_keyboard = True
     elif status == "pending":
         status_text = "⏳ <b>Pending</b>"
@@ -1207,7 +1208,6 @@ async def process_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("🔍 <b>Checking...</b>", parse_mode="HTML")
 
-    # Nickname
     data, error = check_ml_nickname(player_id, zone_id)
     if error:
         await update.message.reply_text(f"❌ <b>Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
@@ -1218,7 +1218,6 @@ async def process_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nickname = info.get("username") or info.get("nickname") or info.get("name") or "-"
     region = info.get("region") or info.get("region_name") or "-"
 
-    # DD + WP
     dd_lines = ["💎 <b>Double Diamond</b>"]
     wp_lines = ["📅 <b>Weekly Pass</b>"]
 
@@ -1758,6 +1757,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "💎 MLBB Diamonds":
         await server_product_shortcut(update, context, "Global")
         return
+    if text == "🔍 Check ML ID":
+        await start_check_id(update, context)
+        return
     if text == "🎮 PUBG UC":
         await server_product_shortcut(update, context, "PUBG")
         return
@@ -1787,9 +1789,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await server_product_shortcut(update, context, "Brazil")
         return
 
-    if text == "🔍 Check ML ID":
-        await start_check_id(update, context)
-        return
     if text == "💰 My Balance":
         await show_my_balance(update)
         return
@@ -1879,8 +1878,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = (
         "📖 <b>Help</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "💎 MLBB Diamonds\n🎮 PUBG UC\n"
-        "⭐ Telegram Stars\n💰 My Balance\n💳 Deposit\n\n"
+        "💎 MLBB Diamonds\n🔍 Check ML ID\n"
+        "🎮 PUBG UC\n⭐ Telegram Stars\n"
+        "💰 My Balance\n💳 Deposit\n\n"
         "🔹 <b>Order:</b>\n"
         "<code>.ml ID ZONE AMOUNT</code>\n"
         "<code>.pg USER_ID AMOUNT</code>\n"
@@ -2198,7 +2198,7 @@ async def handle_pg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not deduct_user_balance(user_id, mc_price):
-        await query.edit_message_text("❌ Balance ဖြတ်လို့ မရပါ。")
+        await query.edit_message_text("❌ Balance ဖြတ်လို့ မရပါ။")
         return
 
     await query.edit_message_text(
@@ -2422,7 +2422,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🌍 Server ရွေးပါ။", reply_markup=server_keyboard())
         return
 
-    # ✅ ML Confirm/Reject
     if data == "ml:confirm":
         await handle_ml_confirm(update, context)
         return
@@ -2434,7 +2433,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ✅ PG Confirm/Reject
     if data == "pg:confirm":
         await handle_pg_confirm(update, context)
         return
@@ -2446,7 +2444,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ✅ TG Confirm/Reject
     if data == "tg:confirm":
         await handle_tg_confirm(update, context)
         return
@@ -2639,7 +2636,9 @@ def main():
         .build()
     )
 
+    # ✅ Command Handlers
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("idcheck", start_check_id))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("addbalance", add_balance_command))
     app.add_handler(CommandHandler("checkbalance", check_balance_command))
@@ -2652,6 +2651,7 @@ def main():
     app.add_handler(CommandHandler("backup", backup_command))
     app.add_handler(CommandHandler("restore", restore_command))
 
+    # ✅ Callback + Message Handlers
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
@@ -2664,7 +2664,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    
-
-    
