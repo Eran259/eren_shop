@@ -241,7 +241,7 @@ def validate_license_key(license_key):
     except Exception:
         return None
 
-    def init_user_api_db():
+def init_user_api_db():
     conn = sqlite3.connect(USER_API_DB)
     conn.execute("""CREATE TABLE IF NOT EXISTS user_api (
         user_id INTEGER PRIMARY KEY,
