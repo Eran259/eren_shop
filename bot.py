@@ -1109,6 +1109,11 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔔 Alert Group: <code>{ALERT_CHAT_ID}</code>\n"
         f"🧪 Sandbox: <b>{MELO_SANDBOX}</b>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
+        "👥 <b>User Management</b>\n"
+        "/block USER_ID\n"
+        "/unblock USER_ID\n"
+        "/listusers\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
         "💡 <b>Balance Commands</b>\n"
         "/addbalance USER_ID MC\n"
         "/checkbalance USER_ID\n\n"
@@ -1957,6 +1962,178 @@ async def check_balance_command(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(f"💰 <b>User Balance</b>\n\n🆔 <code>{user_id}</code>\n🪙 <b>{balance:.3f} MC</b>", parse_mode="HTML")
 
 
+# ============================================================
+# ✅ USER MANAGEMENT
+# ============================================================
+
+async def block_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    if len(args) != 1:
+        await update.message.reply_text(
+            "❌ <code>/block USER_ID</code>\n\n"
+            "📌 <b>ဥပမာ:</b> <code>/block 5318309992</code>",
+            parse_mode="HTML",
+        )
+        return
+    try:
+        user_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ User ID နံပါတ် ဖြစ်ရပါမယ်။")
+        return
+
+    set_access_status(user_id, "rejected")
+
+    await update.message.reply_text(
+        f"✅ <b>User ပိတ်ပြီး</b>\n\n"
+        f"🆔 User ID: <code>{user_id}</code>\n"
+        f"📌 Status: <b>REJECTED</b>\n\n"
+        f"💡 ပြန်ဖွင့်ရန်: <code>/unblock {user_id}</code>",
+        parse_mode="HTML",
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "❌ <b>Access Blocked</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Admin က သင့် Bot အသုံးပြုခွင့်ကို ပိတ်လိုက်ပါတယ်။\n\n"
+                "အကြောင်းရင်း ရှိရင် Admin ကို ဆက်သွယ်ပါ။"
+            ),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        print("BLOCK NOTIFY ERROR:", e)
+
+    try:
+        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
+        admin = update.effective_user
+        uname = f"@{admin.username}" if admin.username else "—"
+
+        alert_text = (
+            "❌ <b>USER BLOCKED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🆔 Blocked User ID: <code>{user_id}</code>\n"
+            f"👤 By Admin: <b>{html.escape(admin.first_name or '—')}</b>\n"
+            f"🔗 Admin Username: <b>{html.escape(uname)}</b>\n\n"
+            f"📌 Status: <b>REJECTED</b>"
+        )
+        await context.bot.send_message(chat_id=alert_target, text=alert_text, parse_mode="HTML")
+    except Exception as e:
+        print("BLOCK ALERT ERROR:", e)
+
+
+async def unblock_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    if len(args) != 1:
+        await update.message.reply_text(
+            "❌ <code>/unblock USER_ID</code>\n\n"
+            "📌 <b>ဥပမာ:</b> <code>/unblock 5318309992</code>",
+            parse_mode="HTML",
+        )
+        return
+    try:
+        user_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ User ID နံပါတ် ဖြစ်ရပါမယ်။")
+        return
+
+    set_access_status(user_id, "approved")
+
+    await update.message.reply_text(
+        f"✅ <b>User ပြန်ဖွင့်ပြီး</b>\n\n"
+        f"🆔 User ID: <code>{user_id}</code>\n"
+        f"📌 Status: <b>APPROVED</b>",
+        parse_mode="HTML",
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "✅ <b>Access Restored</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Admin က သင့် Bot အသုံးပြုခွင့်ကို ပြန်ဖွင့်ပေးပါပြီ။\n\n"
+                "/start နှိပ်ပြီး စတင်ပါ။"
+            ),
+            parse_mode="HTML",
+            reply_markup=main_keyboard(),
+        )
+    except Exception as e:
+        print("UNBLOCK NOTIFY ERROR:", e)
+
+    try:
+        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
+        admin = update.effective_user
+        uname = f"@{admin.username}" if admin.username else "—"
+
+        alert_text = (
+            "✅ <b>USER UNBLOCKED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🆔 User ID: <code>{user_id}</code>\n"
+            f"👤 By Admin: <b>{html.escape(admin.first_name or '—')}</b>\n"
+            f"🔗 Admin Username: <b>{html.escape(uname)}</b>\n\n"
+            f"📌 Status: <b>APPROVED</b>"
+        )
+        await context.bot.send_message(chat_id=alert_target, text=alert_text, parse_mode="HTML")
+    except Exception as e:
+        print("UNBLOCK ALERT ERROR:", e)
+
+
+async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    conn = sqlite3.connect(ACCESS_DB)
+    rows = conn.execute(
+        "SELECT user_id, username, first_name, status, requested_at FROM bot_access ORDER BY requested_at DESC"
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        await update.message.reply_text("📭 User မရှိသေးပါ။")
+        return
+
+    approved = sum(1 for r in rows if r[3] == "approved")
+    pending = sum(1 for r in rows if r[3] == "pending")
+    rejected = sum(1 for r in rows if r[3] == "rejected")
+
+    header = (
+        "👥 <b>All Users</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"✅ Approved: <b>{approved}</b>\n"
+        f"⏳ Pending: <b>{pending}</b>\n"
+        f"❌ Rejected: <b>{rejected}</b>\n"
+        f"📊 Total: <b>{len(rows)}</b>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+    )
+
+    lines = [header]
+
+    for uid, uname, fname, status, req_at in rows:
+        emoji = {"approved": "✅", "pending": "⏳", "rejected": "❌"}.get(status, "❓")
+        uname_text = f"@{uname}" if uname else "—"
+        fname_text = html.escape(fname or "—")
+
+        lines.append(
+            f"{emoji} <code>{uid}</code>\n"
+            f"   👤 {fname_text} | 🔗 {uname_text}\n"
+            f"   📌 <b>{status.upper()}</b>\n"
+        )
+
+    text = "\n".join(lines)
+
+    if len(text) > 4000:
+        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for chunk in chunks:
+            await update.message.reply_text(chunk, parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, parse_mode="HTML")
+
 async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -2061,10 +2238,6 @@ async def list_products_command(update: Update, context: ContextTypes.DEFAULT_TY
         lines.append(f"  💎 <b>{amount}</b> → <code>{sku}</code>")
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
-
-# ============================================================
-# ✅ CONFIRM FUNCTIONS
-# ============================================================
 
 async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -2636,12 +2809,14 @@ def main():
         .build()
     )
 
-    # ✅ Command Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("idcheck", start_check_id))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("addbalance", add_balance_command))
     app.add_handler(CommandHandler("checkbalance", check_balance_command))
+    app.add_handler(CommandHandler("block", block_user_command))
+    app.add_handler(CommandHandler("unblock", unblock_user_command))
+    app.add_handler(CommandHandler("listusers", list_users_command))
     app.add_handler(CommandHandler("setprice", set_price_command))
     app.add_handler(CommandHandler("delprice", delete_price_command))
     app.add_handler(CommandHandler("listprices", list_prices_command))
@@ -2651,7 +2826,6 @@ def main():
     app.add_handler(CommandHandler("backup", backup_command))
     app.add_handler(CommandHandler("restore", restore_command))
 
-    # ✅ Callback + Message Handlers
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
@@ -2664,3 +2838,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
