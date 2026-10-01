@@ -869,7 +869,7 @@ def ensure_server_products(server):
     products = PRODUCT_CACHE.get(server, [])
     return products, PRODUCT_LAST_ERROR.get(server) if not products else None
 
-    def main_keyboard():
+def main_keyboard():
     return ReplyKeyboardMarkup(
         [
             ["💎 MLBB Diamonds", "🎮 PUBG UC"],
