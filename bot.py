@@ -788,7 +788,7 @@ def load_server_products(server):
     data, error = api_get("/api/v1/h2h/pricelists", params=params)
     if error:
         PRODUCT_LAST_ERROR[server] = error
-        print(f"❌ API Error [{server}]: {error}")
+     deffffyncync print(f"❌ API Error [{server}]: {error}")
         return [], error
 
     rows = data.get("data", []) if isinstance(data, dict) else []
@@ -1044,7 +1044,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💎 MLBB Diamonds\n🔍 Check ML ID\n"
             "🎮 PUBG UC\n⭐ Telegram Stars\n"
             "💰 My Balance\n💳 Deposit"
-        )
+   deffffyncync   )
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
         return
 
@@ -1305,7 +1305,7 @@ async def process_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     context.user_data.clear()
 
-    async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_TYPE, server: str):
+ async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_TYPE, server: str):
     products, error = ensure_server_products(server)
     if not products:
         await update.message.reply_text(f"❌ <b>{server}</b>\n\nProduct List ရယူလို့ မရပါ။", parse_mode="HTML")
