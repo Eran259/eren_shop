@@ -788,7 +788,8 @@ def load_server_products(server):
     data, error = api_get("/api/v1/h2h/pricelists", params=params)
     if error:
         PRODUCT_LAST_ERROR[server] = error
-     deffffyncync print(f"❌ API Error [{server}]: {error}")
+        print(f"❌ API Error [{server}]: {error}")
+     
         return [], error
 
     rows = data.get("data", []) if isinstance(data, dict) else []
