@@ -789,7 +789,6 @@ def load_server_products(server):
     if error:
         PRODUCT_LAST_ERROR[server] = error
         print(f"❌ API Error [{server}]: {error}")
-     
         return [], error
 
     rows = data.get("data", []) if isinstance(data, dict) else []
@@ -1045,7 +1044,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💎 MLBB Diamonds\n🔍 Check ML ID\n"
             "🎮 PUBG UC\n⭐ Telegram Stars\n"
             "💰 My Balance\n💳 Deposit"
-      )
+        )
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
         return
 
@@ -1305,8 +1304,9 @@ async def process_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ <b>ID Verified</b>"
     )
     context.user_data.clear()
+    await update.message.reply_text(text, parse_mode="HTML")
 
- async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_TYPE, server: str):
+async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_TYPE, server: str):
     products, error = ensure_server_products(server)
     if not products:
         await update.message.reply_text(f"❌ <b>{server}</b>\n\nProduct List ရယူလို့ မရပါ။", parse_mode="HTML")
@@ -1373,6 +1373,7 @@ async def process_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(chunk, parse_mode="HTML")
     else:
         await update.message.reply_text(text, parse_mode="HTML")
+
 async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """.ml PLAYER_ID ZONE_ID [SERVER] AMOUNT"""
     if not update.message:
@@ -1933,8 +1934,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>.pg USER_ID AMOUNT</code>\n"
         "<code>.tg TARGET AMOUNT</code>"
     )
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
 
-    async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     await update.message.reply_text("⏳ <b>Backup...</b>", parse_mode="HTML")
@@ -2274,8 +2276,6 @@ async def list_products_command(update: Update, context: ContextTypes.DEFAULT_TY
             current = srv
         lines.append(f"  💎 <b>{amount}</b> → <code>{sku}</code>")
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
-    await update.message.reply_text(text, parse_mode="HTML")
 
 async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -2877,5 +2877,7 @@ def main():
 if __name__ == "__main__":
     main()
 
+                                
 
+                                       
 
