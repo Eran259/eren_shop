@@ -66,8 +66,6 @@ SERVER_MAP = {
     "php": "Philippines", "ph": "Philippines", "philippines": "Philippines",
     "brl": "Brazil", "br": "Brazil", "brazil": "Brazil",
     "pubg": "PUBG",
-    "tgs": "TGS",
-    "tgp": "TGP",
 }
 
 SERVER_FLAGS = {
@@ -79,8 +77,6 @@ SERVER_FLAGS = {
     "Philippines": "🇵🇭",
     "Brazil": "🇧🇷",
     "PUBG": "🎮",
-    "TGS": "⭐",
-    "TGP": "👑",
 }
 
 # ✅ MLBB SKU Prefix → Server
@@ -103,6 +99,17 @@ SMART_SKU_PREFIX = {
     "smartmltr": "Turkey",
     "smartmlph": "Philippines",
     "smartmlbr": "Brazil",
+}
+
+# ✅ Smart Order Brand IDs
+SMART_BRAND_IDS = {
+    "Global": 316,
+    "Indonesia": None,
+    "Malaysia": None,
+    "Singapore": None,
+    "Turkey": None,
+    "Philippines": None,
+    "Brazil": None,
 }
 
 PUBG_FALLBACK_SKUS = {
@@ -394,8 +401,6 @@ def get_manual_products_for_server(server):
             game_type = "MLBB"
         elif srv == "PUBG":
             game_type = "PUBG"
-        elif srv in ("TGS", "TGP"):
-            game_type = "Telegram"
         else:
             game_type = "MLBB"
 
@@ -570,8 +575,6 @@ PRODUCT_CACHE = {
     "Philippines": [],
     "Brazil": [],
     "PUBG": [],
-    "TGS": [],
-    "TGP": [],
 }
 LAST_PRODUCTS_LOAD = 0
 PRODUCT_CACHE_TTL = 300
@@ -647,6 +650,12 @@ def get_profile(user_id=None):
 
 def get_balance(user_id=None):
     return api_get("/api/v1/h2h/profile/balance", user_id=user_id)
+
+
+def get_smart_pricelists(brand_id=316, limit=500):
+    """Smart Pricelist API ကနေ Product တွေ ဆွဲယူ"""
+    params = {"brand": brand_id, "limit": limit}
+    return api_get("/api/v1/h2h/smart-pricelists", params=params)
 
 def format_amount_for_display(amount):
     try:
@@ -821,7 +830,6 @@ def load_server_products(server):
         game_keywords = {
             "MLBB": ["ml diamonds", "mobile legends"],
             "PUBG": ["pubg", "unknown cash", "uc"],
-            "Telegram": ["telegram", "star", "premium"],
         }
 
         game_type = None
@@ -869,14 +877,6 @@ def load_server_products(server):
         elif game_type == "PUBG":
             product_server = "PUBG"
 
-        elif game_type == "Telegram":
-            if "premium" in name_text or "gift card" in name_text or "gazette" in name_text:
-                product_server = "TGP"
-            elif "star" in name_text:
-                product_server = "TGS"
-            else:
-                product_server = "TGS"
-
         if product_server != server:
             continue
 
@@ -886,14 +886,6 @@ def load_server_products(server):
             num_match = re.search(r"(\d+)", name)
             amount = num_match.group(1) if num_match else name.strip()
             display_name = name.strip()
-        elif game_type == "Telegram":
-            if product_server == "TGP":
-                amount = name.strip()
-                display_name = name.strip()
-            else:
-                num_match = re.search(r"(\d+)", name)
-                amount = num_match.group(1) if num_match else name.strip()
-                display_name = name.strip()
         else:
             clean_name = re.sub(r"(?i)^mobile\s*legends?\s*", "", name).strip()
             name_lower = clean_name.lower()
@@ -970,8 +962,7 @@ def main_keyboard():
     return ReplyKeyboardMarkup(
         [
             ["💎 MLBB Diamonds", "🔍 Check ML ID"],
-            ["🎮 PUBG UC", "⭐ Telegram Stars"],
-            ["👑 Telegram Premium", "💰 My Balance"],
+            ["🎮 PUBG UC", "💰 My Balance"],
             ["🌍 Global", "🇮🇩 Indonesia"],
             ["🇲🇾 Malaysia", "🇸🇬 Singapore"],
             ["🇹🇷 Turkey", "🇵🇭 Philippines"],
@@ -994,8 +985,6 @@ def server_keyboard():
             [InlineKeyboardButton("🇵🇭 Philippines Server", callback_data="server:Philippines")],
             [InlineKeyboardButton("🇧🇷 Brazil Server", callback_data="server:Brazil")],
             [InlineKeyboardButton("🎮 PUBG", callback_data="server:PUBG")],
-            [InlineKeyboardButton("⭐ Telegram Stars", callback_data="server:TGS")],
-            [InlineKeyboardButton("👑 Telegram Premium", callback_data="server:TGP")],
         ]
     )
 
@@ -1018,11 +1007,6 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=11):
         game_type = product.get("game_type", "MLBB")
         if game_type == "PUBG":
             label = f"🎮 {display_amount} • {price_text}"
-        elif game_type == "Telegram":
-            if server == "TGP":
-                label = f"👑 {display_amount} • {price_text}"
-            else:
-                label = f"⭐ {display_amount} • {price_text}"
         else:
             label = f"💎 {format_amount_for_display(display_amount)} • {price_text}"
 
@@ -1058,7 +1042,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🪙 <b>Balance:</b> {balance:.3f} MC\n\n"
             "🛒 <b>Services</b>\n"
             "💎 MLBB Diamonds\n🔍 Check ML ID\n"
-            "🎮 PUBG UC\n⭐ Telegram Stars\n"
+            "🎮 PUBG UC\n"
             "💰 My Balance\n💳 Deposit"
         )
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
@@ -1068,7 +1052,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if status == "approved":
         status_text = "✅ <b>Active</b>"
-        footer = "🛒 <b>Services</b>\n💎 MLBB Diamonds\n🔍 Check ML ID\n🎮 PUBG UC\n⭐ Telegram Stars\n💰 My Balance\n💳 Deposit"
+        footer = "🛒 <b>Services</b>\n💎 MLBB Diamonds\n🔍 Check ML ID\n🎮 PUBG UC\n💰 My Balance\n💳 Deposit"
         show_keyboard = True
     elif status == "pending":
         status_text = "⏳ <b>Pending</b>"
@@ -1181,21 +1165,15 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>Malaysia</code>, <code>Singapore</code>, "
         "<code>Turkey</code>, <code>Philippines</code>, "
         "<code>Brazil</code>\n\n"
-        "🎮 PUBG: <code>PUBG</code>\n"
-        "⭐ Telegram Stars: <code>TGS</code>\n"
-        "👑 Telegram Premium: <code>TGP</code>\n\n"
+        "🎮 PUBG: <code>PUBG</code>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "📌 <b>ဥပမာ:</b>\n"
         "<code>/setprice Global 60 16.602</code>\n"
         "<code>/setprice Indonesia 60 16.602</code>\n"
-        "<code>/setprice PUBG 60 16.602</code>\n"
-        "<code>/setprice TGS 50 15.699</code>\n"
-        "<code>/setprice TGP 3M 226.061</code>\n\n"
-        "<code>/addproduct Global 60 MLGL5D-S10</code>\n"
-        "<code>/addproduct Indonesia 60 MLID5D-S5</code>\n"
-        "<code>/addproduct PUBG 60 PUBGMGL60U-S12A</code>\n"
-        "<code>/addproduct TGS 50 TS50TS-S1</code>\n"
-        "<code>/addproduct TGP 3M TPGC3M0-S7</code>\n\n"
+        "<code>/setprice PUBG 60 16.602</code>\n\n"
+        "<code>/addproduct Global 5 SMARTMLGL5D</code>\n"
+        "<code>/addproduct Indonesia 5 MLID5D-S5</code>\n"
+        "<code>/addproduct PUBG 60 PUBGMGL60U-S12A</code>\n\n"
         "💾 <b>Backup</b>\n"
         "/backup\n/restore"
     )
@@ -1346,11 +1324,6 @@ async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_
         game_type = p.get("game_type", "MLBB")
         if game_type == "PUBG":
             lines.append(f"  🎮 <b>{html.escape(str(display_amount))}</b> • {price_text}")
-        elif game_type == "Telegram":
-            if server == "TGP":
-                lines.append(f"  👑 <b>{html.escape(str(display_amount))}</b> • {price_text}")
-            else:
-                lines.append(f"  ⭐ <b>{html.escape(str(display_amount))}</b> • {price_text}")
         else:
             lines.append(f"  💎 <b>{html.escape(str(display_amount))}</b> • {price_text}")
 
@@ -1362,18 +1335,6 @@ async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_
         lines.append("💡 <b>Order:</b> <code>.pg PLAYER_ID AMOUNT</code>")
         lines.append("")
         lines.append(f"📌 <b>ဥပမာ:</b> <code>.pg 5123456789 {unique_products[0].get('amount', '60')}</code>")
-    elif server == "TGS":
-        lines.append("")
-        lines.append("💡 <b>Order (Direct):</b> <code>.tg TARGET AMOUNT</code>")
-        lines.append("")
-        lines.append(f"📌 <b>ဥပမာ:</b> <code>.tg @username {unique_products[0].get('amount', '50')}</code>")
-    elif server == "TGP":
-        lines.append("")
-        lines.append("💡 <b>Order (Gift Card):</b> <code>.tg TARGET AMOUNT</code>")
-        lines.append("")
-        lines.append(f"📌 <b>ဥပမာ:</b> <code>.tg @username {unique_products[0].get('amount', '3 Months')}</code>")
-        lines.append("")
-        lines.append("⚠️ <i>Gift Card ဖြစ်တဲ့အတွက် Code ပေးပါမယ်။</i>")
     else:
         lines.append("")
         lines.append("💡 <b>Order:</b> <code>.ml PLAYER_ID ZONE_ID [SERVER] AMOUNT</code>")
@@ -1587,122 +1548,9 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 
-async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
-        return
-    if not await request_access(update, context):
-        return
-
-    user = update.effective_user
-    user_id = user.id
-    args = context.args
-
-    if len(args) != 2:
-        await update.message.reply_text(
-            "❌ <b>အသုံးပြုနည်း</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            "<code>.tg TARGET AMOUNT</code>\n\n"
-            "⭐ <b>Stars:</b>\n<code>.tg @username 50</code>\n\n"
-            "👑 <b>Premium:</b>\n<code>.tg @username 3 Months</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    target = args[0].strip()
-    amount_input = args[1].strip()
-
-    matched_product = None
-    matched_server = None
-
-    for srv in ["TGS", "TGP"]:
-        products, error = ensure_server_products(srv)
-        if not products:
-            continue
-
-        for p in products:
-            p_amount = str(p.get("amount", "")).strip().lower()
-            p_name = str(p.get("display_name", "")).strip().lower()
-
-            if p_amount == amount_input.lower() or p_name == amount_input.lower():
-                matched_product = p
-                matched_server = srv
-                break
-
-        if matched_product:
-            break
-
-    if not matched_product:
-        star_products, _ = ensure_server_products("TGS")
-        prem_products, _ = ensure_server_products("TGP")
-
-        star_amounts = sorted(set(str(p.get("amount", "?")) for p in star_products))
-        prem_names = sorted(set(str(p.get("display_name", "?")) for p in prem_products))
-
-        text = "❌ <b>Product မတွေ့ပါ။</b>\n\n"
-        if star_amounts:
-            text += f"⭐ <b>Stars:</b>\n<code>{', '.join(star_amounts[:10])}</code>\n\n"
-        if prem_names:
-            text += f"👑 <b>Premium:</b>\n<code>{', '.join(prem_names[:10])}</code>"
-
-        await update.message.reply_text(text, parse_mode="HTML")
-        return
-
-    server = matched_server
-    amount = matched_product.get("amount", "?")
-    display_amount = matched_product.get("display_name", amount)
-    mc_price = get_mc_price(server, amount, matched_product)
-
-    if mc_price is None:
-        await update.message.reply_text("⚠️ <b>Price မသတ်မှတ်ရသေးပါ။</b>", parse_mode="HTML")
-        return
-
-    user_balance = get_user_balance(user_id)
-    if user_balance < mc_price:
-        await update.message.reply_text(
-            f"❌ <b>Balance မလုံလောက်ပါ။</b>\n\n"
-            f"🪙 လက်ရှိ: <b>{user_balance:.3f} MC</b>\n"
-            f"💰 လိုအပ်: <b>{mc_price:.3f} MC</b>",
-            parse_mode="HTML",
-        )
-        return
-
-    if server == "TGP":
-        emoji = "👑"
-        label = "Telegram Premium"
-    else:
-        emoji = "⭐"
-        label = "Telegram Stars"
-
-    text = (
-        f"🔍 <b>{label} Order Confirm</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🎯 Target: <code>{html.escape(target)}</code>\n\n"
-        f"{emoji} Product: <b>{html.escape(str(display_amount))}</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n"
-        f"🪙 Balance: <b>{user_balance:.3f} MC</b>\n\n"
-        "⚠️ <b>Confirm လုပ်မှ Order တင်မယ်။</b>"
-    )
-
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Confirm", callback_data="tg:confirm"),
-            InlineKeyboardButton("❌ Reject", callback_data="tg:reject"),
-        ]
-    ])
-
-    context.user_data["tg_order"] = {
-        "target": target,
-        "server": server,
-        "amount": amount,
-        "display_amount": display_amount,
-        "mc_price": mc_price,
-        "product": matched_product,
-    }
-
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
-
-
-def create_transaction(product, player_id, zone_id):
-    sku = product.get("sku_code")
+def create_transaction(product, player_id, zone_id, max_bid=None):
+    """Smart SKU ဆိုရင် smart-transaction ကို ခေါ်၊ Regular SKU ဆိုရင် transaction ကို ခေါ်"""
+    sku = product.get("sku_code", "")
     buyer_trx_id = "EREN-" + uuid.uuid4().hex[:20].upper()
     payload = {
         "sku_code": sku,
@@ -1711,25 +1559,15 @@ def create_transaction(product, player_id, zone_id):
         "buyer_trx_id": buyer_trx_id,
         "sandbox_mode": MELO_SANDBOX,
     }
+
+    # ✅ Smart SKU ဆိုရင် smart-transaction
+    if sku.lower().startswith("smart"):
+        if max_bid:
+            payload["max_bid"] = int(max_bid)
+        return api_post("/api/v1/h2h/smart-transaction", payload)
+
+    # ✅ Regular SKU ဆိုရင် transaction
     return api_post("/api/v1/h2h/transaction", payload)
-
-
-def create_smart_transaction(product, player_id, zone_id, max_bid):
-    """
-    Smart Order အတွက် Transaction တင်
-    max_bid ကို ထည့်ရတယ်
-    """
-    sku = product.get("sku_code")
-    buyer_trx_id = "EREN-" + uuid.uuid4().hex[:20].upper()
-    payload = {
-        "sku_code": sku,
-        "customer_target": str(player_id),
-        "customer_target_zone": str(zone_id) if zone_id else "",
-        "buyer_trx_id": buyer_trx_id,
-        "sandbox_mode": MELO_SANDBOX,
-        "max_bid": int(max_bid),
-    }
-    return api_post("/api/v1/h2h/smart-transaction", payload)
 
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.photo:
@@ -1816,19 +1654,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await pg_command(update, context)
         return
 
-    if text.lower().startswith(".tg "):
-        parts = text.split()
-        if len(parts) < 3:
-            await update.message.reply_text(
-                "❌ <code>.tg TARGET AMOUNT</code>\n\n"
-                "📌 <b>ဥပမာ:</b> <code>.tg @username 50</code>",
-                parse_mode="HTML",
-            )
-            return
-        context.args = parts[1:]
-        await tg_command(update, context)
-        return
-
     if text == "💎 MLBB Diamonds":
         await server_product_shortcut(update, context, "Global")
         return
@@ -1837,12 +1662,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if text == "🎮 PUBG UC":
         await server_product_shortcut(update, context, "PUBG")
-        return
-    if text == "⭐ Telegram Stars":
-        await server_product_shortcut(update, context, "TGS")
-        return
-    if text == "👑 Telegram Premium":
-        await server_product_shortcut(update, context, "TGP")
         return
 
     if text == "🌍 Global":
@@ -1958,12 +1777,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "📖 <b>Help</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
         "💎 MLBB Diamonds\n🔍 Check ML ID\n"
-        "🎮 PUBG UC\n⭐ Telegram Stars\n"
+        "🎮 PUBG UC\n"
         "💰 My Balance\n💳 Deposit\n\n"
         "🔹 <b>Order:</b>\n"
         "<code>.ml ID ZONE [SERVER] AMOUNT</code>\n"
-        "<code>.pg USER_ID AMOUNT</code>\n"
-        "<code>.tg TARGET AMOUNT</code>"
+        "<code>.pg USER_ID AMOUNT</code>"
     )
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
 
@@ -2340,7 +2158,18 @@ async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("🛒 <b>Creating Order...</b>", parse_mode="HTML")
 
     product = dict(matched_product)
-    data, error = create_transaction(product, player_id, zone_id)
+    sku_code = product.get("sku_code", "")
+
+    # ✅ Smart SKU ဆိုရင် max_bid ထည့်ပါ
+    max_bid = None
+    if sku_code.lower().startswith("smart"):
+        # Max Price ကို max_bid အနေနဲ့ သုံးပါ
+        max_bid = product.get("max_price")
+        if not max_bid:
+            # max_price မရှိရင် mc_price ရဲ့ 10 ဆ ကို သုံးပါ
+            max_bid = int(mc_price * 10)
+
+    data, error = create_transaction(product, player_id, zone_id, max_bid)
 
     if error:
         await query.edit_message_text(f"❌ <b>Order Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
@@ -2536,123 +2365,6 @@ async def handle_pg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.pop("pg_order", None)
 
-
-async def handle_tg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    order = context.user_data.get("tg_order")
-    if not order:
-        await query.edit_message_text("❌ <b>Order မတွေ့ပါ။</b>", parse_mode="HTML")
-        return
-
-    user = query.from_user
-    user_id = user.id
-
-    target = order["target"]
-    server = order["server"]
-    amount = order["amount"]
-    display_amount = order["display_amount"]
-    mc_price = order["mc_price"]
-    matched_product = order["product"]
-
-    user_balance = get_user_balance(user_id)
-    if user_balance < mc_price:
-        await query.edit_message_text("❌ <b>Balance မလုံလောက်ပါ။</b>", parse_mode="HTML")
-        context.user_data.pop("tg_order", None)
-        return
-
-    await query.edit_message_text("🛒 <b>Creating Order...</b>", parse_mode="HTML")
-
-    product = dict(matched_product)
-    data, error = create_transaction(product, target, "")
-
-    if error:
-        await query.edit_message_text(f"❌ <b>Order Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
-        context.user_data.pop("tg_order", None)
-        return
-
-    result = data.get("data", {})
-    transaction_id = result.get("id", "-")
-    status = result.get("status", "pending")
-    serial_number = result.get("serial_number", "")
-    order_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    if deduct_user_balance(user_id, mc_price):
-        new_balance = get_user_balance(user_id)
-    else:
-        new_balance = user_balance
-
-    if server == "TGP":
-        emoji = "👑"
-        label = "Telegram Premium"
-        code_section = ""
-        if serial_number:
-            code_section = f"\n🎁 <b>Gift Code:</b>\n<code>{html.escape(str(serial_number))}</code>\n"
-    else:
-        emoji = "⭐"
-        label = "Telegram Stars"
-        code_section = ""
-
-    text = (
-        f"🛒 <b>{label} Order Created</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🎯 Target: <code>{html.escape(target)}</code>\n\n"
-        f"{emoji} Product: <b>{html.escape(str(display_amount))}</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
-        f"🆔 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
-        f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n"
-        f"{code_section}\n"
-        f"🪙 လက်ကျန် MC: <b>{new_balance:.3f} MC</b>"
-    )
-    sent_msg = await query.edit_message_text(text, parse_mode="HTML")
-
-    order_info = (
-        f"⭐ Game: <b>{label}</b>\n"
-        f"🎯 Target: <code>{html.escape(target)}</code>\n\n"
-        f"{emoji} Product: <b>{html.escape(str(display_amount))}</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
-    )
-
-    uname = f"@{user.username}" if user.username else "—"
-    fname = user.first_name or "User"
-    user_info = (
-        f"👤 Name: <b>{html.escape(fname)}</b>\n"
-        f"🔗 Username: <b>{html.escape(uname)}</b>\n"
-        f"🆔 User ID: <code>{user_id}</code>\n\n"
-    )
-
-    asyncio.create_task(
-        auto_status_update(
-            context=context,
-            transaction_id=str(transaction_id),
-            user_id=user_id,
-            chat_id=query.message.chat_id,
-            message_id=sent_msg.message_id,
-            order_info=order_info,
-            product_amount=str(amount),
-            user_info=user_info,
-        )
-    )
-
-    try:
-        alarm_text = (
-            f"🔔 <b>NEW {label.upper()} ORDER!</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👤 Name: <b>{html.escape(fname)}</b>\n"
-            f"🔗 Username: <b>{html.escape(uname)}</b>\n"
-            f"🆔 User ID: <code>{user_id}</code>\n\n"
-            f"{order_info}"
-        )
-        if serial_number:
-            alarm_text += f"🎁 Gift Code: <code>{html.escape(str(serial_number))}</code>\n\n"
-        alarm_text += (
-            f"🧾 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
-            f"⏰ Time: <code>{order_time}</code>"
-        )
-        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
-        await context.bot.send_message(chat_id=alert_target, text=alarm_text, parse_mode="HTML")
-    except Exception as e:
-        print("ORDER ALARM ERROR:", e)
-
-    context.user_data.pop("tg_order", None)
-
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
@@ -2682,17 +2394,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pg_order", None)
         await query.edit_message_text(
             "❌ <b>PUBG Order Cancelled</b>\n\n/start နဲ့ ပြန်စပါ။",
-            parse_mode="HTML",
-        )
-        return
-
-    if data == "tg:confirm":
-        await handle_tg_confirm(update, context)
-        return
-    if data == "tg:reject":
-        context.user_data.pop("tg_order", None)
-        await query.edit_message_text(
-            "❌ <b>Telegram Order Cancelled</b>\n\n/start နဲ့ ပြန်စပါ။",
             parse_mode="HTML",
         )
         return
@@ -2757,10 +2458,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = query.from_user.id
         user_balance = get_user_balance(user_id)
 
-        if server in ("TGS", "TGP"):
-            prompt = "🎯 <b>Telegram Username</b> ထည့်ပါ။\n\nဥပမာ: <code>@username</code>"
-        else:
-            prompt = "🆔 <b>Player ID</b> ထည့်ပါ။\nဥပမာ: <code>12345678</code>"
+        prompt = "🆔 <b>Player ID</b> ထည့်ပါ။\nဥပမာ: <code>12345678</code>"
 
         text = (
             "💎 <b>Selected</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -2906,3 +2604,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+                      
+
+    
+
+
+
+
