@@ -773,7 +773,7 @@ def load_server_products(server):
     rows = data.get("data", []) if isinstance(data, dict) else []
     meta = data.get("meta", {}) if isinstance(data, dict) else {}
 
-    brands = Truebrands", [])
+    brands = meta.get("brands", [])
     brand_map = {str(x.get("id")): x.get("name", "") for x in brands if isinstance(x, dict)}
 
     print(f"📦 API returned {len(rows)} products for {server}")
