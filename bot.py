@@ -773,7 +773,7 @@ def load_server_products(server):
     rows = data.get("data", []) if isinstance(data, dict) else []
     meta = data.get("meta", {}) if isinstance(data, dict) else {}
 
-    brands = meta.get("brands", [])
+    brands = Truebrands", [])
     brand_map = {str(x.get("id")): x.get("name", "") for x in brands if isinstance(x, dict)}
 
     print(f"📦 API returned {len(rows)} products for {server}")
@@ -1029,7 +1029,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         footer = "/start နှိပ်ပြီး Request ပြန်ပို့နိုင်ပါတယ်။"
         show_keyboard = False
     else:
-        await request_access(update, context, force_request=True)
+        await request_access(update, context, force_request=False)
         status_text = "⏳ <b>Pending Approval</b>"
         footer = "Approve ဖြစ်တဲ့အခါ Bot ကို သုံးလို့ရပါမယ်။"
         show_keyboard = False
