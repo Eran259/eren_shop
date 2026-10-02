@@ -58,7 +58,8 @@ AMOUNT_ALIASES = {
 }
 
 SERVER_MAP = {
-    "gl": "Global", "global": "Global", "id": "Global",
+    "gl": "Global", "global": "Global",
+    "id": "Indonesia", "indo": "Indonesia", "indonesia": "Indonesia",
     "my": "Malaysia", "malaysia": "Malaysia",
     "sg": "Singapore", "singapore": "Singapore",
     "ttr": "Turkey", "tr": "Turkey", "turkey": "Turkey",
@@ -70,8 +71,13 @@ SERVER_MAP = {
 }
 
 SERVER_FLAGS = {
-    "Global": "🌍", "Malaysia": "🇲🇾", "Singapore": "🇸🇬",
-    "Turkey": "🇹🇷", "Philippines": "🇵🇭", "Brazil": "🇧🇷",
+    "Global": "🌍",
+    "Indonesia": "🇮🇩",
+    "Malaysia": "🇲🇾",
+    "Singapore": "🇸🇬",
+    "Turkey": "🇹🇷",
+    "Philippines": "🇵🇭",
+    "Brazil": "🇧🇷",
     "PUBG": "🎮",
     "TGS": "⭐",
     "TGP": "👑",
@@ -80,6 +86,7 @@ SERVER_FLAGS = {
 # ✅ MLBB SKU Prefix → Server
 MLBB_SKU_PREFIX = {
     "mlgl": "Global",
+    "mlid": "Indonesia",    # ✅ Indonesia ကို သီးသန့် ထည့်ပြီး
     "mlmy": "Malaysia",
     "mlsg": "Singapore",
     "mltr": "Turkey",
@@ -372,7 +379,7 @@ def get_manual_products_for_server(server):
     conn.close()
     products = []
     for srv, amount, sku, display_name in rows:
-        if srv in ("Global", "Malaysia", "Singapore", "Turkey", "Philippines", "Brazil"):
+        if srv in ("Global", "Indonesia", "Malaysia", "Singapore", "Turkey", "Philippines", "Brazil"):
             game_type = "MLBB"
         elif srv == "PUBG":
             game_type = "PUBG"
@@ -544,8 +551,13 @@ async def handle_access_callback(update, context):
     return True
 
 PRODUCT_CACHE = {
-    "Global": [], "Malaysia": [], "Singapore": [],
-    "Turkey": [], "Philippines": [], "Brazil": [],
+    "Global": [],
+    "Indonesia": [],    # ✅ Indonesia ထည့်ပြီး
+    "Malaysia": [],
+    "Singapore": [],
+    "Turkey": [],
+    "Philippines": [],
+    "Brazil": [],
     "PUBG": [],
     "TGS": [],
     "TGP": [],
@@ -668,7 +680,6 @@ def get_unique_products(server):
         unique_products.append(cheapest)
 
     return unique_products
-
 
 async def check_transaction_status(transaction_id):
     data, error = api_get(f"/api/v1/h2h/transaction/{transaction_id}")
@@ -816,7 +827,7 @@ def load_server_products(server):
         product_server = None
 
         if game_type == "MLBB":
-            # ✅ MLGL SKU Prefix နဲ့ ပဲ ရွေး (Global, Malaysia, Singapore, ...)
+            # ✅ MLBB SKU Prefix နဲ့ ရွေး (mlgl, mlid, mlmy, ...)
             for prefix, srv_name in MLBB_SKU_PREFIX.items():
                 if sku_lower.startswith(prefix):
                     product_server = srv_name
@@ -825,7 +836,7 @@ def load_server_products(server):
             # ✅ SKU မပါရင် — Name နဲ့ ခွဲ
             if not product_server:
                 if "indonesia" in name_text or "(id)" in name_text:
-                    product_server = "Global"
+                    product_server = "Indonesia"
                 elif "malaysia" in name_text or "(my)" in name_text:
                     product_server = "Malaysia"
                 elif "singapore" in name_text or "(sg)" in name_text:
@@ -945,11 +956,12 @@ def main_keyboard():
             ["💎 MLBB Diamonds", "🔍 Check ML ID"],
             ["🎮 PUBG UC", "⭐ Telegram Stars"],
             ["👑 Telegram Premium", "💰 My Balance"],
-            ["🌍 Global", "🇲🇾 Malaysia"],
-            ["🇸🇬 Singapore", "🇹🇷 Turkey"],
-            ["🇵🇭 Philippines", "🇧🇷 Brazil"],
-            ["💳 Deposit", "📞 Contact Admin"],
-            ["⚙️ Admin Panel", "🔌 API Status"],
+            ["🌍 Global", "🇮🇩 Indonesia"],      # ✅ Indonesia ထည့်ပြီး
+            ["🇲🇾 Malaysia", "🇸🇬 Singapore"],
+            ["🇹🇷 Turkey", "🇵🇭 Philippines"],
+            ["🇧🇷 Brazil", "💳 Deposit"],
+            ["📞 Contact Admin", "⚙️ Admin Panel"],
+            ["🔌 API Status"],
         ],
         resize_keyboard=True,
     )
@@ -959,6 +971,7 @@ def server_keyboard():
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("🌍 Global Server", callback_data="server:Global")],
+            [InlineKeyboardButton("🇮🇩 Indonesia Server", callback_data="server:Indonesia")],  # ✅
             [InlineKeyboardButton("🇲🇾 Malaysia Server", callback_data="server:Malaysia")],
             [InlineKeyboardButton("🇸🇬 Singapore Server", callback_data="server:Singapore")],
             [InlineKeyboardButton("🇹🇷 Turkey Server", callback_data="server:Turkey")],
@@ -1148,19 +1161,22 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/listproducts [SERVER]\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🌍 <b>Server Names</b>\n"
-        "💎 MLBB: <code>Global</code>, <code>Malaysia</code>, "
-        "<code>Singapore</code>, <code>Turkey</code>, "
-        "<code>Philippines</code>, <code>Brazil</code>\n\n"
+        "💎 MLBB: <code>Global</code>, <code>Indonesia</code>, "
+        "<code>Malaysia</code>, <code>Singapore</code>, "
+        "<code>Turkey</code>, <code>Philippines</code>, "
+        "<code>Brazil</code>\n\n"
         "🎮 PUBG: <code>PUBG</code>\n"
         "⭐ Telegram Stars: <code>TGS</code>\n"
         "👑 Telegram Premium: <code>TGP</code>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "📌 <b>ဥပမာ:</b>\n"
         "<code>/setprice Global 60 16.602</code>\n"
+        "<code>/setprice Indonesia 60 16.602</code>\n"
         "<code>/setprice PUBG 60 16.602</code>\n"
         "<code>/setprice TGS 50 15.699</code>\n"
         "<code>/setprice TGP 3M 226.061</code>\n\n"
         "<code>/addproduct Global 60 MLGL5D-S10</code>\n"
+        "<code>/addproduct Indonesia 60 MLID5D-S5</code>\n"
         "<code>/addproduct PUBG 60 PUBGMGL60U-S12A</code>\n"
         "<code>/addproduct TGS 50 TS50TS-S1</code>\n"
         "<code>/addproduct TGP 3M TPGC3M0-S7</code>\n\n"
@@ -1288,10 +1304,8 @@ async def process_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ <b>ID Verified</b>"
     )
     context.user_data.clear()
-    await update.message.reply_text(text, parse_mode="HTML")
 
-
-async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_TYPE, server: str):
+    async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_TYPE, server: str):
     products, error = ensure_server_products(server)
     if not products:
         await update.message.reply_text(f"❌ <b>{server}</b>\n\nProduct List ရယူလို့ မရပါ။", parse_mode="HTML")
@@ -1347,7 +1361,7 @@ async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_
         lines.append("")
         lines.append("💡 <b>Order:</b> <code>.ml PLAYER_ID ZONE_ID [SERVER] AMOUNT</code>")
         lines.append("")
-        lines.append("📌 <b>Server Codes:</b> gl, my, sg, ttr, php, brl")
+        lines.append("📌 <b>Server Codes:</b> gl, id, my, sg, ttr, php, brl")
         lines.append("")
         lines.append(f"📌 <b>ဥပမာ:</b> <code>.ml 12345678 2039 gl {unique_products[0].get('amount', '5')}</code>")
 
@@ -1358,7 +1372,6 @@ async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_
             await update.message.reply_text(chunk, parse_mode="HTML")
     else:
         await update.message.reply_text(text, parse_mode="HTML")
-
 async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """.ml PLAYER_ID ZONE_ID [SERVER] AMOUNT"""
     if not update.message:
@@ -1377,7 +1390,7 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if server_input not in SERVER_MAP:
             await update.message.reply_text(
                 "❌ <b>Server မမှန်ပါ။</b>\n\n"
-                "<code>gl</code>, <code>my</code>, <code>sg</code>, <code>ttr</code>, <code>php</code>, <code>brl</code>",
+                "<code>gl</code>, <code>id</code>, <code>my</code>, <code>sg</code>, <code>ttr</code>, <code>php</code>, <code>brl</code>",
                 parse_mode="HTML",
             )
             return
@@ -1391,7 +1404,7 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ <b>အသုံးပြုနည်း</b>\n\n"
             "<code>.ml PLAYER_ID ZONE_ID AMOUNT</code>\n"
             "<code>.ml PLAYER_ID ZONE_ID SERVER AMOUNT</code>\n\n"
-            "<b>Server Codes:</b> gl, my, sg, ttr, php, brl",
+            "<b>Server Codes:</b> gl, id, my, sg, ttr, php, brl",
             parse_mode="HTML",
         )
         return
@@ -1480,6 +1493,7 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await checking_msg.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
 
+
 async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """.pg PLAYER_ID AMOUNT"""
     if not update.message:
@@ -1555,6 +1569,7 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+
 
 async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """.tg TARGET AMOUNT"""
@@ -1800,6 +1815,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "🌍 Global":
         await server_product_shortcut(update, context, "Global")
         return
+    if text == "🇮🇩 Indonesia":     # ✅ Indonesia ထည့်ပြီး
+        await server_product_shortcut(update, context, "Indonesia")
+        return
     if text == "🇲🇾 Malaysia":
         await server_product_shortcut(update, context, "Malaysia")
         return
@@ -1900,6 +1918,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("❓ Menu ကနေရွေးပေးပါ။", reply_markup=main_keyboard())
 
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await request_access(update, context):
         return
@@ -1913,10 +1932,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>.pg USER_ID AMOUNT</code>\n"
         "<code>.tg TARGET AMOUNT</code>"
     )
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
 
-
-async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     await update.message.reply_text("⏳ <b>Backup...</b>", parse_mode="HTML")
@@ -1983,10 +2000,6 @@ async def check_balance_command(update: Update, context: ContextTypes.DEFAULT_TY
     balance = get_user_balance(user_id)
     await update.message.reply_text(f"💰 <b>User Balance</b>\n\n🆔 <code>{user_id}</code>\n🪙 <b>{balance:.3f} MC</b>", parse_mode="HTML")
 
-
-# ============================================================
-# ✅ USER MANAGEMENT
-# ============================================================
 
 async def block_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -2156,6 +2169,7 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         await update.message.reply_text(text, parse_mode="HTML")
 
+
 async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -2259,6 +2273,8 @@ async def list_products_command(update: Update, context: ContextTypes.DEFAULT_TY
             current = srv
         lines.append(f"  💎 <b>{amount}</b> → <code>{sku}</code>")
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
+    await update.message.reply_text(text, parse_mode="HTML")
 
 async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -2859,3 +2875,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
