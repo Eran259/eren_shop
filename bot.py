@@ -1029,7 +1029,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         footer = "/start နှိပ်ပြီး Request ပြန်ပို့နိုင်ပါတယ်။"
         show_keyboard = False
     else:
-        await request_access(update, context, force_request=False)
+        await request_access(update, context, force_request=True)
         status_text = "⏳ <b>Pending Approval</b>"
         footer = "Approve ဖြစ်တဲ့အခါ Bot ကို သုံးလို့ရပါမယ်။"
         show_keyboard = False
