@@ -77,6 +77,16 @@ SERVER_FLAGS = {
     "TGP": "👑",
 }
 
+# ✅ MLBB SKU Prefix → Server
+MLBB_SKU_PREFIX = {
+    "mlgl": "Global",
+    "mlmy": "Malaysia",
+    "mlsg": "Singapore",
+    "mltr": "Turkey",
+    "mlph": "Philippines",
+    "mlbr": "Brazil",
+}
+
 PUBG_FALLBACK_SKUS = {
     "60": [
         "PUBGMGL60U-S12A",
@@ -784,6 +794,10 @@ def load_server_products(server):
         brand_name = brand_map.get(brand_id, "")
         name_text = f"{brand_name} {product.get('name', '')} {product.get('type_name', '')}".lower()
 
+        # ✅ SKU ကို အရင် ရယူ
+        sku = str(product.get("sku_code", ""))
+        sku_lower = sku.lower()
+
         game_keywords = {
             "MLBB": ["ml diamonds", "mobile legends"],
             "PUBG": ["pubg", "unknown cash", "uc"],
@@ -802,20 +816,28 @@ def load_server_products(server):
         product_server = None
 
         if game_type == "MLBB":
-            if "mobile legends (indonesia)" in name_text or "(id)" in name_text:
-                product_server = "Global"
-            elif "malaysia" in name_text or "(my)" in name_text:
-                product_server = "Malaysia"
-            elif "singapore" in name_text or "(sg)" in name_text:
-                product_server = "Singapore"
-            elif "turkey" in name_text or "(tr)" in name_text:
-                product_server = "Turkey"
-            elif "philippines" in name_text or "(ph)" in name_text:
-                product_server = "Philippines"
-            elif "brazil" in name_text or "(br)" in name_text:
-                product_server = "Brazil"
-            elif "global" in name_text:
-                product_server = "Global"
+            # ✅ MLGL SKU Prefix နဲ့ ပဲ ရွေး (Global, Malaysia, Singapore, ...)
+            for prefix, srv_name in MLBB_SKU_PREFIX.items():
+                if sku_lower.startswith(prefix):
+                    product_server = srv_name
+                    break
+
+            # ✅ SKU မပါရင် — Name နဲ့ ခွဲ
+            if not product_server:
+                if "indonesia" in name_text or "(id)" in name_text:
+                    product_server = "Global"
+                elif "malaysia" in name_text or "(my)" in name_text:
+                    product_server = "Malaysia"
+                elif "singapore" in name_text or "(sg)" in name_text:
+                    product_server = "Singapore"
+                elif "turkey" in name_text or "(tr)" in name_text:
+                    product_server = "Turkey"
+                elif "philippines" in name_text or "(ph)" in name_text:
+                    product_server = "Philippines"
+                elif "brazil" in name_text or "(br)" in name_text:
+                    product_server = "Brazil"
+                elif "global" in name_text:
+                    product_server = "Global"
 
         elif game_type == "PUBG":
             product_server = "PUBG"
@@ -831,7 +853,6 @@ def load_server_products(server):
         if product_server != server:
             continue
 
-        sku = str(product.get("sku_code", ""))
         name = str(product.get("name", ""))
 
         if game_type == "PUBG":
@@ -1139,7 +1160,7 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>/setprice PUBG 60 16.602</code>\n"
         "<code>/setprice TGS 50 15.699</code>\n"
         "<code>/setprice TGP 3M 226.061</code>\n\n"
-        "<code>/addproduct Global 60 MLGL60D-S1</code>\n"
+        "<code>/addproduct Global 60 MLGL5D-S10</code>\n"
         "<code>/addproduct PUBG 60 PUBGMGL60U-S12A</code>\n"
         "<code>/addproduct TGS 50 TS50TS-S1</code>\n"
         "<code>/addproduct TGP 3M TPGC3M0-S7</code>\n\n"
@@ -1324,11 +1345,11 @@ async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_
         lines.append("⚠️ <i>Gift Card ဖြစ်တဲ့အတွက် Code ပေးပါမယ်။</i>")
     else:
         lines.append("")
-        lines.append("💡 <b>Order:</b> <code>.ml PLAYER_ID ZONE_ID AMOUNT</code>")
+        lines.append("💡 <b>Order:</b> <code>.ml PLAYER_ID ZONE_ID [SERVER] AMOUNT</code>")
         lines.append("")
         lines.append("📌 <b>Server Codes:</b> gl, my, sg, ttr, php, brl")
         lines.append("")
-        lines.append(f"📌 <b>ဥပမာ:</b> <code>.ml 12345678 2039 {unique_products[0].get('amount', '5')}</code>")
+        lines.append(f"📌 <b>ဥပမာ:</b> <code>.ml 12345678 2039 gl {unique_products[0].get('amount', '5')}</code>")
 
     text = "\n".join(lines)
 
@@ -1369,7 +1390,8 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "❌ <b>အသုံးပြုနည်း</b>\n\n"
             "<code>.ml PLAYER_ID ZONE_ID AMOUNT</code>\n"
-            "<code>.ml PLAYER_ID ZONE_ID SERVER AMOUNT</code>",
+            "<code>.ml PLAYER_ID ZONE_ID SERVER AMOUNT</code>\n\n"
+            "<b>Server Codes:</b> gl, my, sg, ttr, php, brl",
             parse_mode="HTML",
         )
         return
@@ -1725,7 +1747,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(parts) < 4:
             await update.message.reply_text(
                 "❌ <code>.ml PLAYER_ID ZONE_ID [SERVER] AMOUNT</code>\n\n"
-                "📌 <b>ဥပမာ:</b> <code>.ml 12345678 2039 wp</code>",
+                "📌 <b>ဥပမာ:</b> <code>.ml 12345678 2039 gl 5</code>",
                 parse_mode="HTML",
             )
             return
@@ -1887,7 +1909,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎮 PUBG UC\n⭐ Telegram Stars\n"
         "💰 My Balance\n💳 Deposit\n\n"
         "🔹 <b>Order:</b>\n"
-        "<code>.ml ID ZONE AMOUNT</code>\n"
+        "<code>.ml ID ZONE [SERVER] AMOUNT</code>\n"
         "<code>.pg USER_ID AMOUNT</code>\n"
         "<code>.tg TARGET AMOUNT</code>"
     )
@@ -2237,7 +2259,6 @@ async def list_products_command(update: Update, context: ContextTypes.DEFAULT_TY
             current = srv
         lines.append(f"  💎 <b>{amount}</b> → <code>{sku}</code>")
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
-
 
 async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -2838,6 +2859,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
