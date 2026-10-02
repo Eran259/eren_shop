@@ -1045,7 +1045,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💎 MLBB Diamonds\n🔍 Check ML ID\n"
             "🎮 PUBG UC\n⭐ Telegram Stars\n"
             "💰 My Balance\n💳 Deposit"
-   deffffyncync   )
+      )
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
         return
 
