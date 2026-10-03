@@ -740,13 +740,13 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
                     if price_charged > 0:
                         add_user_balance(user_id, price_charged)
                         refunded = True
-                        print(f"✅ Refunded {price_charged} MC to {user_id}")
+                        print(f"✅ Refunded {price_charged} Coin to {user_id}")
 
             if status.lower() == "success":
                 ref_value = "0"
             else:
                 if price_charged > 0:
-                    ref_value = f"{price_charged:.3f} MC"
+                    ref_value = f"{price_charged:.3f} Coin"
                 else:
                     ref_value = str(product_amount) if product_amount else "0"
 
@@ -761,7 +761,7 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
                     f"⏳ Status: <b>{status.upper()}</b>\n"
                     f"🔖 Ref: <b>{html.escape(ref_value)}</b>\n"
                     f"🆔 Trx: <code>{transaction_id}</code>\n"
-                    f"🪙 Balance: <b>{new_balance:.3f} MC</b>"
+                    f"🪙 Balance: <b>{new_balance:.3f} Coin</b>"
                 )
                 if status.lower() in ("failed", "canceled", "refunded"):
                     text += f"\n\n💰 <b>Refunded to your balance.</b>"
@@ -783,7 +783,7 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
                     f"{info_text}"
                     f"🆔 Trx: <code>{transaction_id}</code>\n"
                     f"🔖 Ref: <b>{html.escape(ref_value)}</b>\n"
-                    f"🪙 Balance: <b>{new_balance:.3f} MC</b>"
+                    f"🪙 Balance: <b>{new_balance:.3f} Coin</b>"
                 )
                 if status.lower() in ("failed", "canceled", "refunded"):
                     alert_text += f"\n\n💰 <b>Refunded to user balance.</b>"
@@ -995,7 +995,7 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=11):
         amount = product.get("amount", "?")
         display_amount = product.get("display_name", amount)
         mc_price = get_mc_price(server, amount, product)
-        price_text = f"{mc_price:.3f} MC" if mc_price else "No Price"
+        price_text = f"{mc_price:.3f} Coin" if mc_price else "No Price"
 
         game_type = product.get("game_type", "MLBB")
         if game_type == "PUBG":
@@ -1032,7 +1032,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "💎 <b>Eren's Diamond Bot</b>\n\n"
             f"👑 <b>Status:</b> Admin\n"
-            f"🪙 <b>Balance:</b> {balance:.3f} MC\n\n"
+            f"🪙 <b>Balance:</b> {balance:.3f} Coin\n\n"
             "🛒 <b>Services</b>\n"
             "💎 MLBB Diamonds\n🔍 Check ML ID\n"
             "🎮 PUBG UC\n"
@@ -1066,7 +1066,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "💎 <b>Eren's Diamond Bot</b>\n\n"
         f"👤 <b>Status:</b> {status_text}\n"
-        f"🪙 <b>Balance:</b> {balance:.3f} MC\n\n"
+        f"🪙 <b>Balance:</b> {balance:.3f} Coin\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{footer}\n\n⚡ Powered by Eren"
     )
@@ -1091,22 +1091,22 @@ async def show_my_balance(update: Update):
             mc_ks = mc_to_ks(mc_balance)
             text = (
                 "💰 <b>Balance</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"🪙 <b>User Balance</b>\n<b>{user_balance:.3f} MC</b>\n💵 ≈ <b>{user_ks:,.0f} Ks</b>\n\n"
-                f"🪙 <b>Melostore Balance</b>\n<b>{mc_balance:,.2f} MC</b>\n💵 ≈ <b>{mc_ks:,.0f} Ks</b>\n\n"
+                f"🪙 <b>User Balance</b>\n<b>{user_balance:.3f} Coin</b>\n💵 ≈ <b>{user_ks:,.0f} Ks</b>\n\n"
+                f"🪙 <b>Melostore Balance</b>\n<b>{mc_balance:,.2f} Coin</b>\n💵 ≈ <b>{mc_ks:,.0f} Ks</b>\n\n"
                 f"💵 USD: <b>${usd:,.2f}</b>"
             )
         else:
             user_ks = mc_to_ks(user_balance)
             text = (
                 "💰 <b>Balance</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"🪙 <b>User Balance</b>\n<b>{user_balance:.3f} MC</b>\n💵 ≈ <b>{user_ks:,.0f} Ks</b>\n\n"
+                f"🪙 <b>User Balance</b>\n<b>{user_balance:.3f} Coin</b>\n💵 ≈ <b>{user_ks:,.0f} Ks</b>\n\n"
                 f"🪙 <b>Melostore</b>: <i>Error</i>"
             )
     else:
         ks_balance = mc_to_ks(user_balance)
         text = (
             "💰 <b>Your Balance</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🪙 Balance: <b>{user_balance:.3f} MC</b>\n"
+            f"🪙 Balance: <b>{user_balance:.3f} Coin</b>\n"
             f"💵 ≈ <b>{ks_balance:,.0f} Ks</b>\n\n"
             "💳 Press <b>Deposit</b> to add funds."
         )
@@ -1131,7 +1131,7 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "📊 <b>Admin Panel</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🪙 Melostore MC: <b>{balance:,.2f} MC</b>\n"
+        f"🪙 Melostore Coin: <b>{balance:,.2f} Coin</b>\n"
         f"💵 USD: <b>${usd:,.2f}</b>\n\n"
         f"🔔 Alert Group: <code>{ALERT_CHAT_ID}</code>\n"
         f"🧪 Sandbox: <b>{MELO_SANDBOX}</b>\n\n"
@@ -1142,10 +1142,10 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/listusers\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "💡 <b>Balance Commands</b>\n"
-        "/addbalance USER_ID MC\n"
+        "/addbalance USER_ID Coin\n"
         "/checkbalance USER_ID\n\n"
         "💰 <b>Price Commands</b>\n"
-        "/setprice SERVER AMOUNT MC\n"
+        "/setprice SERVER AMOUNT Coin\n"
         "/delprice SERVER AMOUNT\n"
         "/listprices [SERVER]\n\n"
         "📦 <b>Product Commands</b>\n"
@@ -1161,10 +1161,10 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎮 PUBG: <code>PUBG</code>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "📌 <b>Examples:</b>\n"
-        "<code>/setprice Global 60 16.602</code>\n"
-        "<code>/setprice Indonesia 60 16.602</code>\n"
+        "<code>/setprice Global 14 4.227</code>\n"
+        "<code>/setprice Indonesia 14 4.227</code>\n"
         "<code>/setprice PUBG 60 16.602</code>\n\n"
-        "<code>/addproduct Global 5 SMARTMLGL5D</code>\n"
+        "<code>/addproduct Global 14 MLGL14DD-S12</code>\n"
         "<code>/addproduct Indonesia 5 MLID5D-S5</code>\n"
         "<code>/addproduct PUBG 60 PUBGMGL60U-S12A</code>\n\n"
         "💾 <b>Backup</b>\n"
@@ -1180,7 +1180,7 @@ async def show_deposit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💛 <b>AYA Pay</b>: <code>09678664100</code>\n"
         "💚 <b>UAB Pay</b>: <code>09425160424</code>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "⚠️ <b>Minimum deposit is 100 MC.</b>\n\n"
+        "⚠️ <b>Minimum deposit is 100 Coin.</b>\n\n"
         "📸 Send the screenshot to this chat."
     )
     await update.message.reply_text(text, parse_mode="HTML")
@@ -1312,7 +1312,7 @@ async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_
         amount = p.get("amount", "?")
         display_amount = p.get("display_name", amount)
         mc_price = get_mc_price(server, amount, p)
-        price_text = f"{mc_price:.3f} MC" if mc_price else "No Price"
+        price_text = f"{mc_price:.3f} Coin" if mc_price else "No Price"
 
         game_type = p.get("game_type", "MLBB")
         if game_type == "PUBG":
@@ -1415,8 +1415,8 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_balance < mc_price:
         await update.message.reply_text(
             f"❌ <b>Insufficient balance.</b>\n\n"
-            f"🪙 Current: <b>{user_balance:.3f} MC</b>\n"
-            f"💰 Required: <b>{mc_price:.3f} MC</b>",
+            f"🪙 Current: <b>{user_balance:.3f} Coin</b>\n"
+            f"💰 Required: <b>{mc_price:.3f} Coin</b>",
             parse_mode="HTML",
         )
         return
@@ -1439,8 +1439,8 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
         f"🌍 Server: <b>{html.escape(server)}</b>\n"
         f"💎 Product: <b>{html.escape(str(display_amount))}</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n"
-        f"🪙 Balance: <b>{user_balance:.3f} MC</b>\n\n"
+        f"🪙 Coin Price: <b>{mc_price:.3f} Coin</b>\n"
+        f"🪙 Balance: <b>{user_balance:.3f} Coin</b>\n\n"
         "⚠️ <b>Order will be placed after confirmation.</b>"
     )
 
@@ -1509,8 +1509,8 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_balance < mc_price:
         await update.message.reply_text(
             f"❌ <b>Insufficient balance.</b>\n\n"
-            f"🪙 Current: <b>{user_balance:.3f} MC</b>\n"
-            f"💰 Required: <b>{mc_price:.3f} MC</b>",
+            f"🪙 Current: <b>{user_balance:.3f} Coin</b>\n"
+            f"💰 Required: <b>{mc_price:.3f} Coin</b>",
             parse_mode="HTML",
         )
         return
@@ -1520,8 +1520,8 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🆔 Player ID: <code>{html.escape(player_id)}</code>\n\n"
         f"🎮 Product: <b>{html.escape(amount_input)} UC</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n"
-        f"🪙 Balance: <b>{user_balance:.3f} MC</b>\n\n"
+        f"🪙 Coin Price: <b>{mc_price:.3f} Coin</b>\n"
+        f"🪙 Balance: <b>{user_balance:.3f} Coin</b>\n\n"
         "⚠️ <b>Order will be placed after confirmation.</b>"
     )
 
@@ -1542,7 +1542,6 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def create_transaction(product, player_id, zone_id, max_bid=None):
-    """Create a transaction for a regular SKU."""
     sku = product.get("sku_code", "")
     buyer_trx_id = "EREN-" + uuid.uuid4().hex[:20].upper()
     payload = {
@@ -1798,7 +1797,7 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     args = context.args
     if len(args) != 2:
-        await update.message.reply_text("❌ <code>/addbalance USER_ID MC</code>", parse_mode="HTML")
+        await update.message.reply_text("❌ <code>/addbalance USER_ID Coin</code>", parse_mode="HTML")
         return
     try:
         user_id = int(args[0])
@@ -1809,13 +1808,13 @@ async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     add_user_balance(user_id, amount)
     new_balance = get_user_balance(user_id)
     await update.message.reply_text(
-        f"✅ <b>Balance added</b>\n\n🆔 <code>{user_id}</code>\n🪙 <b>{amount:.3f} MC</b>\n🪙 New Balance: <b>{new_balance:.3f} MC</b>",
+        f"✅ <b>Balance added</b>\n\n🆔 <code>{user_id}</code>\n🪙 <b>{amount:.3f} Coin</b>\n🪙 New Balance: <b>{new_balance:.3f} Coin</b>",
         parse_mode="HTML",
     )
     try:
         await context.bot.send_message(
             chat_id=user_id,
-            text=f"✅ <b>MC Balance added.</b>\n\n🪙 <b>{new_balance:.3f} MC</b>",
+            text=f"✅ <b>Coin Balance added.</b>\n\n🪙 <b>{new_balance:.3f} Coin</b>",
             parse_mode="HTML", reply_markup=main_keyboard(),
         )
     except Exception as e:
@@ -1835,7 +1834,7 @@ async def check_balance_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("❌ User ID must be numeric.")
         return
     balance = get_user_balance(user_id)
-    await update.message.reply_text(f"💰 <b>User Balance</b>\n\n🆔 <code>{user_id}</code>\n🪙 <b>{balance:.3f} MC</b>", parse_mode="HTML")
+    await update.message.reply_text(f"💰 <b>User Balance</b>\n\n🆔 <code>{user_id}</code>\n🪙 <b>{balance:.3f} Coin</b>", parse_mode="HTML")
 
 
 async def block_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2012,18 +2011,18 @@ async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if len(args) != 3:
-        await update.message.reply_text("❌ <code>/setprice SERVER AMOUNT MC</code>", parse_mode="HTML")
+        await update.message.reply_text("❌ <code>/setprice SERVER AMOUNT Coin</code>", parse_mode="HTML")
         return
     server, amount = args[0], args[1]
     try:
         mc_price = float(args[2])
     except ValueError:
-        await update.message.reply_text("❌ MC must be a number.")
+        await update.message.reply_text("❌ Coin must be a number.")
         return
     set_manual_price(server, amount, mc_price)
     final_mc = mc_price * MC_PROFIT_MARGIN
     await update.message.reply_text(
-        f"✅ <b>Price set</b>\n\n🌍 {server}\n💎 {amount}\n💰 Final: <b>{final_mc:.3f} MC</b>",
+        f"✅ <b>Price set</b>\n\n🌍 {server}\n💎 {amount}\n💰 Final: <b>{final_mc:.3f} Coin</b>",
         parse_mode="HTML",
     )
 
@@ -2054,7 +2053,7 @@ async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         if srv != current:
             lines.append(f"\n🌍 <b>{srv}</b>")
             current = srv
-        lines.append(f"  💎 {amt} → <b>{mc * MC_PROFIT_MARGIN:.3f} MC</b>")
+        lines.append(f"  💎 {amt} → <b>{mc * MC_PROFIT_MARGIN:.3f} Coin</b>")
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
@@ -2134,7 +2133,7 @@ async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_balance < mc_price:
         await query.edit_message_text(
             f"❌ <b>Insufficient balance.</b>\n\n"
-            f"🪙 Current: <b>{user_balance:.3f} MC</b>",
+            f"🪙 Current: <b>{user_balance:.3f} Coin</b>",
             parse_mode="HTML",
         )
         context.user_data.pop("ml_order", None)
@@ -2145,13 +2144,10 @@ async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     product = dict(matched_product)
     sku_code = product.get("sku_code", "")
 
-    # If the SKU is a Smart SKU, set max_bid
     max_bid = None
     if sku_code.lower().startswith("smart"):
-        # Use max_price as max_bid
         max_bid = product.get("max_price")
         if not max_bid:
-            # If max_price is not available, use mc_price * 1000
             max_bid = int(round(mc_price * 1000))
 
     data, error = create_transaction(product, player_id, zone_id, max_bid)
@@ -2178,10 +2174,10 @@ async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
         f"🌍 Server: <b>{html.escape(server)}</b>\n"
         f"💎 Product: <b>{html.escape(str(display_amount))}</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+        f"🪙 Coin Price: <b>{mc_price:.3f} Coin</b>\n\n"
         f"🆔 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
         f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n\n"
-        f"🪙 Balance: <b>{new_balance:.3f} MC</b>"
+        f"🪙 Balance: <b>{new_balance:.3f} Coin</b>"
     )
     sent_msg = await query.edit_message_text(text, parse_mode="HTML")
 
@@ -2191,7 +2187,7 @@ async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
         f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n\n"
         f"💎 Product: <b>{html.escape(str(display_amount))}</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+        f"🪙 Coin Price: <b>{mc_price:.3f} Coin</b>\n\n"
     )
 
     uname = f"@{user.username}" if user.username else "—"
@@ -2297,10 +2293,10 @@ async def handle_pg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛒 <b>PUBG Order Created</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🆔 Player ID: <code>{html.escape(player_id)}</code>\n\n"
         f"🎮 Product: <b>{html.escape(amount_input)} UC</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n\n"
+        f"🪙 Coin Price: <b>{mc_price:.3f} Coin</b>\n\n"
         f"🆔 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
         f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n\n"
-        f"🪙 Balance: <b>{new_balance:.3f} MC</b>"
+        f"🪙 Balance: <b>{new_balance:.3f} Coin</b>"
     )
     sent_msg = await query.edit_message_text(text, parse_mode="HTML")
 
@@ -2308,7 +2304,7 @@ async def handle_pg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎮 Game: <b>PUBG Mobile</b>\n"
         f"🆔 Player ID: <code>{html.escape(player_id)}</code>\n\n"
         f"🎮 Product: <b>{html.escape(amount_input)} UC</b>\n"
-        f"🪙 MC Price: <b>{mc_price:.3f} MC</b>\n"
+        f"🪙 Coin Price: <b>{mc_price:.3f} Coin</b>\n"
         f"📦 SKU: <code>{html.escape(str(used_sku))}</code>\n\n"
     )
 
@@ -2439,7 +2435,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         amount = product.get("display_name", product.get("amount", "?"))
         mc_price = get_mc_price(server, product.get("amount"), product)
-        price_text = f"{mc_price:.3f} MC" if mc_price else "No Price"
+        price_text = f"{mc_price:.3f} Coin" if mc_price else "No Price"
         user_id = query.from_user.id
         user_balance = get_user_balance(user_id)
 
@@ -2450,7 +2446,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🌍 Server: <b>{html.escape(server)}</b>\n"
             f"💎 Product: <b>{html.escape(str(amount))}</b>\n"
             f"🪙 Price: <b>{html.escape(price_text)}</b>\n\n"
-            f"🪙 Your Balance: <b>{user_balance:.3f} MC</b>\n\n"
+            f"🪙 Your Balance: <b>{user_balance:.3f} Coin</b>\n\n"
             f"{prompt}"
         )
         await query.edit_message_text(text, parse_mode="HTML")
