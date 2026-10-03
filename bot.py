@@ -1076,7 +1076,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, parse_mode="HTML")
 
-
 async def show_my_balance(update: Update):
     user_id = update.effective_user.id
     user_balance = get_user_balance(user_id)
@@ -1102,14 +1101,12 @@ async def show_my_balance(update: Update):
                 f"🪙 <b>User Balance</b>\n<b>{user_balance:.3f} Coin</b>\n💵 ≈ <b>{user_ks:,.0f} Ks</b>\n\n"
                 f"🪙 <b>Melostore</b>: <i>Error</i>"
             )
-
     else:
-    text = (
-        "💰 <b>Your Balance</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🪙 Balance: <b>{user_balance:.3f} Coin</b>\n\n"
-        "💳 Press <b>Deposit</b> to add funds."
-    )
-    
+        text = (
+            "💰 <b>Your Balance</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🪙 Balance: <b>{user_balance:.3f} Coin</b>\n\n"
+            "💳 Press <b>Deposit</b> to add funds."
+        )
 
     await update.message.reply_text(text, parse_mode="HTML")
 
