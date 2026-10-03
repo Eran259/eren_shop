@@ -1542,7 +1542,7 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def create_transaction(product, player_id, zone_id, max_bid=None):
-    """If the SKU is a Smart SKU, use /smart-transaction, otherwise use /transaction."""
+    """Create a transaction for a regular SKU."""
     sku = product.get("sku_code", "")
     buyer_trx_id = "EREN-" + uuid.uuid4().hex[:20].upper()
     payload = {
@@ -1552,12 +1552,6 @@ def create_transaction(product, player_id, zone_id, max_bid=None):
         "buyer_trx_id": buyer_trx_id,
         "sandbox_mode": MELO_SANDBOX,
     }
-
-    if sku.lower().startswith("smart"):
-        if max_bid:
-            payload["max_bid"] = int(max_bid)
-        return api_post("/api/v1/h2h/smart-transaction", payload)
-
     return api_post("/api/v1/h2h/transaction", payload)
 
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
