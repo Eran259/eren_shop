@@ -2146,8 +2146,8 @@ async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sku_code = product.get("sku_code", "")
 
     # If the SKU is a Smart SKU, set max_bid
-max_bid = None
-if sku_code.lower().startswith("smart"):
+    max_bid = None
+    if sku_code.lower().startswith("smart"):
     # Use max_price as max_bid
     max_bid = product.get("max_price")
     if not max_bid:
