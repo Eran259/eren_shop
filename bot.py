@@ -1826,8 +1826,7 @@ async def check_balance_command(update: Update, context: ContextTypes.DEFAULT_TY
     if update.effective_user.id != ADMIN_ID:
         return
     args = context.args
-    if len(args) != 1:
-        await update.message.reply_text("❌ <code>/checkbalance USER_ID</code>", parse_mode="HTML")
+    if len(args) !=async     await update.message.reply_text("❌ <code>/checkbalance USER_ID</code>", parse_mode="HTML")
         return
     try:
         user_id = int(args[0])
@@ -2148,11 +2147,11 @@ async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # If the SKU is a Smart SKU, set max_bid
     max_bid = None
     if sku_code.lower().startswith("smart"):
-    # Use max_price as max_bid
-    max_bid = product.get("max_price")
-    if not max_bid:
-        # If max_price is not available, use mc_price * 1000
-        max_bid = int(round(mc_price * 1000))
+        # Use max_price as max_bid
+        max_bid = product.get("max_price")
+        if not max_bid:
+            # If max_price is not available, use mc_price * 1000
+            max_bid = int(round(mc_price * 1000))
 
     data, error = create_transaction(product, player_id, zone_id, max_bid)
 
