@@ -1102,14 +1102,14 @@ async def show_my_balance(update: Update):
                 f"🪙 <b>User Balance</b>\n<b>{user_balance:.3f} Coin</b>\n💵 ≈ <b>{user_ks:,.0f} Ks</b>\n\n"
                 f"🪙 <b>Melostore</b>: <i>Error</i>"
             )
+
     else:
-        ks_balance = mc_to_ks(user_balance)
-        text = (
-            "💰 <b>Your Balance</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🪙 Balance: <b>{user_balance:.3f} Coin</b>\n"
-            f"💵 ≈ <b>{ks_balance:,.0f} Ks</b>\n\n"
-            "💳 Press <b>Deposit</b> to add funds."
-        )
+    text = (
+        "💰 <b>Your Balance</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🪙 Balance: <b>{user_balance:.3f} Coin</b>\n\n"
+        "💳 Press <b>Deposit</b> to add funds."
+    )
+    
 
     await update.message.reply_text(text, parse_mode="HTML")
 
@@ -1176,9 +1176,9 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_deposit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "💳 <b>Deposit</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "💙 <b>K Pay</b>: <code>09766605879</code>\n"
-        "💛 <b>AYA Pay</b>: <code>09678664100</code>\n"
-        "💚 <b>UAB Pay</b>: <code>09425160424</code>\n\n"
+        "💙 <b>K Pay</b>: <code>09766605879 (TNS)</code>\n"
+        "💛 <b>AYA Pay</b>: <code>09678664100 (HHS)</code>\n"
+        "💚 <b>UAB Pay</b>: <code>09425160424 (TNS)</code>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "⚠️ <b>Minimum deposit is 100 Coin.</b>\n\n"
         "📸 Send the screenshot to this chat."
