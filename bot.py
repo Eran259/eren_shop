@@ -2146,11 +2146,13 @@ async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sku_code = product.get("sku_code", "")
 
     # If the SKU is a Smart SKU, set max_bid
-    max_bid = None
-    if sku_code.lower().startswith("smart"):
-        max_bid = product.get("max_price")
-        if not max_bid:
-            max_bid = int(mc_price * 10)
+max_bid = None
+if sku_code.lower().startswith("smart"):
+    # Use max_price as max_bid
+    max_bid = product.get("max_price")
+    if not max_bid:
+        # If max_price is not available, use mc_price * 1000
+        max_bid = int(round(mc_price * 1000))
 
     data, error = create_transaction(product, player_id, zone_id, max_bid)
 
