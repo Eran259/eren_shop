@@ -1826,7 +1826,8 @@ async def check_balance_command(update: Update, context: ContextTypes.DEFAULT_TY
     if update.effective_user.id != ADMIN_ID:
         return
     args = context.args
-    if len(args) !=async     await update.message.reply_text("❌ <code>/checkbalance USER_ID</code>", parse_mode="HTML")
+    if len(args) != 1:
+        await update.message.reply_text("❌ <code>/checkbalance USER_ID</code>", parse_mode="HTML")
         return
     try:
         user_id = int(args[0])
