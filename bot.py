@@ -66,6 +66,8 @@ SERVER_MAP = {
     "php": "Philippines", "ph": "Philippines", "philippines": "Philippines",
     "brl": "Brazil", "br": "Brazil", "brazil": "Brazil",
     "pubg": "PUBG",
+    "tgs": "TGS",
+    "tgp": "TGP",
 }
 
 SERVER_FLAGS = {
@@ -77,8 +79,11 @@ SERVER_FLAGS = {
     "Philippines": "🇵🇭",
     "Brazil": "🇧🇷",
     "PUBG": "🎮",
+    "TGS": "⭐",
+    "TGP": "👑",
 }
 
+# ✅ MLBB SKU Prefix → Server
 MLBB_SKU_PREFIX = {
     "mlgl": "Global",
     "mlid": "Indonesia",
@@ -89,6 +94,7 @@ MLBB_SKU_PREFIX = {
     "mlbr": "Brazil",
 }
 
+# ✅ Smart SKU Prefix
 SMART_SKU_PREFIX = {
     "smartmlgl": "Global",
     "smartmlid": "Indonesia",
@@ -398,6 +404,8 @@ def get_manual_products_for_server(server):
             game_type = "MLBB"
         elif srv == "PUBG":
             game_type = "PUBG"
+        elif srv in ("TGS", "TGP"):
+            game_type = "Telegram"
         else:
             game_type = "MLBB"
 
@@ -572,6 +580,8 @@ PRODUCT_CACHE = {
     "Philippines": [],
     "Brazil": [],
     "PUBG": [],
+    "TGS": [],
+    "TGP": [],
 }
 LAST_PRODUCTS_LOAD = 0
 PRODUCT_CACHE_TTL = 300
@@ -714,7 +724,8 @@ async def get_transaction_detail(transaction_id):
 
 async def auto_status_update(context, transaction_id, user_id, chat_id, message_id,
                               order_info=None, product_amount="",
-                              user_info=None, max_wait=600):
+                              user_info=None, max_wait=600,
+                              mc_price=0):
     start_time = time.time()
     check_interval = 15
     refunded = False
@@ -737,16 +748,20 @@ async def auto_status_update(context, transaction_id, user_id, chat_id, message_
                     except Exception:
                         price_charged = 0
 
-                    if price_charged > 0:
-                        add_user_balance(user_id, price_charged)
+                    # ✅ Refund the user's paid amount
+                    refund_amount = mc_price if mc_price else price_charged
+                    if refund_amount > 0:
+                        add_user_balance(user_id, refund_amount)
                         refunded = True
-                        print(f"✅ Refunded {price_charged} Coin to {user_id}")
+                        print(f"✅ Refunded {refund_amount} Coin to {user_id}")
 
             if status.lower() == "success":
                 ref_value = "0"
             else:
-                if price_charged > 0:
-                    ref_value = f"{price_charged:.3f} Coin"
+                # ✅ Show the refunded amount
+                refund_amount = mc_price if mc_price else price_charged
+                if refund_amount > 0:
+                    ref_value = f"{refund_amount:.3f} Coin"
                 else:
                     ref_value = str(product_amount) if product_amount else "0"
 
@@ -826,6 +841,7 @@ def load_server_products(server):
         game_keywords = {
             "MLBB": ["ml diamonds", "mobile legends"],
             "PUBG": ["pubg", "unknown cash", "uc"],
+            "Telegram": ["telegram", "star", "premium"],
         }
 
         game_type = None
@@ -870,6 +886,14 @@ def load_server_products(server):
         elif game_type == "PUBG":
             product_server = "PUBG"
 
+        elif game_type == "Telegram":
+            if "premium" in name_text or "gift card" in name_text or "gazette" in name_text:
+                product_server = "TGP"
+            elif "star" in name_text:
+                product_server = "TGS"
+            else:
+                product_server = "TGS"
+
         if product_server != server:
             continue
 
@@ -879,6 +903,14 @@ def load_server_products(server):
             num_match = re.search(r"(\d+)", name)
             amount = num_match.group(1) if num_match else name.strip()
             display_name = name.strip()
+        elif game_type == "Telegram":
+            if product_server == "TGP":
+                amount = name.strip()
+                display_name = name.strip()
+            else:
+                num_match = re.search(r"(\d+)", name)
+                amount = num_match.group(1) if num_match else name.strip()
+                display_name = name.strip()
         else:
             clean_name = re.sub(r"(?i)^mobile\s*legends?\s*", "", name).strip()
             name_lower = clean_name.lower()
@@ -955,7 +987,8 @@ def main_keyboard():
     return ReplyKeyboardMarkup(
         [
             ["💎 MLBB Diamonds", "🔍 Check ML ID"],
-            ["🎮 PUBG UC", "💰 My Balance"],
+            ["🎮 PUBG UC", "⭐ Telegram Stars"],
+            ["👑 Telegram Premium", "💰 My Balance"],
             ["🌍 Global", "🇮🇩 Indonesia"],
             ["🇲🇾 Malaysia", "🇸🇬 Singapore"],
             ["🇹🇷 Turkey", "🇵🇭 Philippines"],
@@ -978,6 +1011,8 @@ def server_keyboard():
             [InlineKeyboardButton("🇵🇭 Philippines Server", callback_data="server:Philippines")],
             [InlineKeyboardButton("🇧🇷 Brazil Server", callback_data="server:Brazil")],
             [InlineKeyboardButton("🎮 PUBG", callback_data="server:PUBG")],
+            [InlineKeyboardButton("⭐ Telegram Stars", callback_data="server:TGS")],
+            [InlineKeyboardButton("👑 Telegram Premium", callback_data="server:TGP")],
         ]
     )
 
@@ -1000,6 +1035,11 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=11):
         game_type = product.get("game_type", "MLBB")
         if game_type == "PUBG":
             label = f"🎮 {display_amount} • {price_text}"
+        elif game_type == "Telegram":
+            if server == "TGP":
+                label = f"👑 {display_amount} • {price_text}"
+            else:
+                label = f"⭐ {display_amount} • {price_text}"
         else:
             label = f"💎 {format_amount_for_display(display_amount)} • {price_text}"
 
@@ -1035,7 +1075,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🪙 <b>Balance:</b> {balance:.3f} Coin\n\n"
             "🛒 <b>Services</b>\n"
             "💎 MLBB Diamonds\n🔍 Check ML ID\n"
-            "🎮 PUBG UC\n"
+            "🎮 PUBG UC\n⭐ Telegram Stars\n"
+            "👑 Telegram Premium\n"
             "💰 My Balance\n💳 Deposit"
         )
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
@@ -1045,7 +1086,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if status == "approved":
         status_text = "✅ <b>Active</b>"
-        footer = "🛒 <b>Services</b>\n💎 MLBB Diamonds\n🔍 Check ML ID\n🎮 PUBG UC\n💰 My Balance\n💳 Deposit"
+        footer = "🛒 <b>Services</b>\n💎 MLBB Diamonds\n🔍 Check ML ID\n🎮 PUBG UC\n⭐ Telegram Stars\n👑 Telegram Premium\n💰 My Balance\n💳 Deposit"
         show_keyboard = True
     elif status == "pending":
         status_text = "⏳ <b>Pending</b>"
@@ -1075,6 +1116,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
     else:
         await update.message.reply_text(text, parse_mode="HTML")
+
 
 async def show_my_balance(update: Update):
     user_id = update.effective_user.id
@@ -1155,15 +1197,17 @@ async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<code>Malaysia</code>, <code>Singapore</code>, "
         "<code>Turkey</code>, <code>Philippines</code>, "
         "<code>Brazil</code>\n\n"
-        "🎮 PUBG: <code>PUBG</code>\n\n"
+        "🎮 PUBG: <code>PUBG</code>\n"
+        "⭐ Telegram Stars: <code>TGS</code>\n"
+        "👑 Telegram Premium: <code>TGP</code>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "📌 <b>Examples:</b>\n"
         "<code>/setprice Global 14 4.227</code>\n"
-        "<code>/setprice Indonesia 14 4.227</code>\n"
-        "<code>/setprice PUBG 60 16.602</code>\n\n"
+        "<code>/setprice TGS 50 15.699</code>\n"
+        "<code>/setprice TGP 3M 226.061</code>\n\n"
         "<code>/addproduct Global 14 MLGL14DD-S12</code>\n"
-        "<code>/addproduct Indonesia 5 MLID5D-S5</code>\n"
-        "<code>/addproduct PUBG 60 PUBGMGL60U-S12A</code>\n\n"
+        "<code>/addproduct TGS 50 TS50TS-S1</code>\n"
+        "<code>/addproduct TGP 3M TPGC3M0-S7</code>\n\n"
         "💾 <b>Backup</b>\n"
         "/backup\n/restore"
     )
@@ -1314,6 +1358,11 @@ async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_
         game_type = p.get("game_type", "MLBB")
         if game_type == "PUBG":
             lines.append(f"  🎮 <b>{html.escape(str(display_amount))}</b> • {price_text}")
+        elif game_type == "Telegram":
+            if server == "TGP":
+                lines.append(f"  👑 <b>{html.escape(str(display_amount))}</b> • {price_text}")
+            else:
+                lines.append(f"  ⭐ <b>{html.escape(str(display_amount))}</b> • {price_text}")
         else:
             lines.append(f"  💎 <b>{html.escape(str(display_amount))}</b> • {price_text}")
 
@@ -1325,6 +1374,18 @@ async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_
         lines.append("💡 <b>Order:</b> <code>.pg PLAYER_ID AMOUNT</code>")
         lines.append("")
         lines.append(f"📌 <b>Example:</b> <code>.pg 5123456789 {unique_products[0].get('amount', '60')}</code>")
+    elif server == "TGS":
+        lines.append("")
+        lines.append("💡 <b>Order (Direct):</b> <code>.tg TARGET AMOUNT</code>")
+        lines.append("")
+        lines.append(f"📌 <b>Example:</b> <code>.tg @username {unique_products[0].get('amount', '50')}</code>")
+    elif server == "TGP":
+        lines.append("")
+        lines.append("💡 <b>Order (Gift Card):</b> <code>.tg TARGET AMOUNT</code>")
+        lines.append("")
+        lines.append(f"📌 <b>Example:</b> <code>.tg email@gmail.com {unique_products[0].get('amount', '3M')}</code>")
+        lines.append("")
+        lines.append("⚠️ <i>Gift Card - Email required.</i>")
     else:
         lines.append("")
         lines.append("💡 <b>Order:</b> <code>.ml PLAYER_ID ZONE_ID [SERVER] AMOUNT</code>")
@@ -1538,6 +1599,138 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 
+async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    if not await request_access(update, context):
+        return
+
+    user = update.effective_user
+    user_id = user.id
+    args = context.args
+
+    if len(args) != 2:
+        await update.message.reply_text(
+            "❌ <b>Usage</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            "<code>.tg TARGET AMOUNT</code>\n\n"
+            "⭐ <b>Stars:</b>\n<code>.tg @username 50</code>\n\n"
+            "👑 <b>Premium:</b>\n<code>.tg email@gmail.com 3M</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    target = args[0].strip()
+    amount_input = args[1].strip()
+
+    matched_product = None
+    matched_server = None
+
+    for srv in ["TGS", "TGP"]:
+        products, error = ensure_server_products(srv)
+        if not products:
+            continue
+
+        for p in products:
+            p_amount = str(p.get("amount", "")).strip().lower()
+            p_name = str(p.get("display_name", "")).strip().lower()
+
+            if p_amount == amount_input.lower() or p_name == amount_input.lower():
+                matched_product = p
+                matched_server = srv
+                break
+
+        if matched_product:
+            break
+
+    if not matched_product:
+        star_products, _ = ensure_server_products("TGS")
+        prem_products, _ = ensure_server_products("TGP")
+
+        star_amounts = sorted(set(str(p.get("amount", "?")) for p in star_products))
+        prem_names = sorted(set(str(p.get("display_name", "?")) for p in prem_products))
+
+        text = "❌ <b>Product not found.</b>\n\n"
+        if star_amounts:
+            text += f"⭐ <b>Stars:</b>\n<code>{', '.join(star_amounts[:10])}</code>\n\n"
+        if prem_names:
+            text += f"👑 <b>Premium:</b>\n<code>{', '.join(prem_names[:10])}</code>"
+
+        await update.message.reply_text(text, parse_mode="HTML")
+        return
+
+    server = matched_server
+    amount = matched_product.get("amount", "?")
+    display_amount = matched_product.get("display_name", amount)
+    mc_price = get_mc_price(server, amount, matched_product)
+
+    if mc_price is None:
+        await update.message.reply_text("⚠️ <b>Price not set.</b>", parse_mode="HTML")
+        return
+
+    # ✅ Validate target for TGP (Email) and TGS (Username)
+    if server == "TGP":
+        if "@" not in target:
+            await update.message.reply_text(
+                "❌ <b>Email required for Telegram Premium.</b>\n\n"
+                "Example: <code>email@gmail.com</code>",
+                parse_mode="HTML",
+            )
+            return
+    elif server == "TGS":
+        if not target.startswith("@"):
+            await update.message.reply_text(
+                "❌ <b>Username required for Telegram Stars.</b>\n\n"
+                "Example: <code>@username</code>",
+                parse_mode="HTML",
+            )
+            return
+
+    user_balance = get_user_balance(user_id)
+    if user_balance < mc_price:
+        await update.message.reply_text(
+            f"❌ <b>Insufficient balance.</b>\n\n"
+            f"🪙 Current: <b>{user_balance:.3f} Coin</b>\n"
+            f"💰 Required: <b>{mc_price:.3f} Coin</b>",
+            parse_mode="HTML",
+        )
+        return
+
+    if server == "TGP":
+        emoji = "👑"
+        label = "Telegram Premium"
+    else:
+        emoji = "⭐"
+        label = "Telegram Stars"
+
+    text = (
+        f"🔍 <b>{label} Order Confirm</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎯 Target: <code>{html.escape(target)}</code>\n\n"
+        f"{emoji} Product: <b>{html.escape(str(display_amount))}</b>\n"
+        f"🪙 Coin Price: <b>{mc_price:.3f} Coin</b>\n"
+        f"🪙 Balance: <b>{user_balance:.3f} Coin</b>\n\n"
+        "⚠️ <b>Order will be placed after confirmation.</b>"
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Confirm", callback_data="tg:confirm"),
+            InlineKeyboardButton("❌ Reject", callback_data="tg:reject"),
+        ]
+    ])
+
+    context.user_data["tg_order"] = {
+        "target": target,
+        "server": server,
+        "amount": amount,
+        "display_amount": display_amount,
+        "mc_price": mc_price,
+        "product": matched_product,
+    }
+
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+
 def create_transaction(product, player_id, zone_id, max_bid=None):
     sku = product.get("sku_code", "")
     buyer_trx_id = "EREN-" + uuid.uuid4().hex[:20].upper()
@@ -1585,20 +1778,23 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     document = update.message.document
-    if not (document.file_name or "").endswith('.zip'):
-        await update.message.reply_text("❌ Please send a ZIP file only.")
+    file_name = document.file_name or ""
+
+    # ✅ ZIP — Backup Restore
+    if file_name.endswith('.zip'):
+        await update.message.reply_text("⏳ <b>Restoring...</b>", parse_mode="HTML")
+        try:
+            file = await context.bot.get_file(document.file_id)
+            zip_bytes = await file.download_as_bytearray()
+            if restore_backup_zip(bytes(zip_bytes)):
+                await update.message.reply_text("✅ <b>Restore successful.</b>\n\nPlease redeploy the Bot.")
+            else:
+                await update.message.reply_text("❌ Restore failed.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {html.escape(str(e))}")
         return
 
-    await update.message.reply_text("⏳ <b>Restoring...</b>", parse_mode="HTML")
-    try:
-        file = await context.bot.get_file(document.file_id)
-        zip_bytes = await file.download_as_bytearray()
-        if restore_backup_zip(bytes(zip_bytes)):
-            await update.message.reply_text("✅ <b>Restore successful.</b>\n\nPlease redeploy the Bot.")
-        else:
-            await update.message.reply_text("❌ Restore failed.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {html.escape(str(e))}")
+    await update.message.reply_text("❌ Please send a ZIP file only.")
 
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1635,6 +1831,19 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await pg_command(update, context)
         return
 
+    if text.lower().startswith(".tg "):
+        parts = text.split()
+        if len(parts) < 3:
+            await update.message.reply_text(
+                "❌ <code>.tg TARGET AMOUNT</code>\n\n"
+                "📌 <b>Example:</b> <code>.tg @username 50</code>",
+                parse_mode="HTML",
+            )
+            return
+        context.args = parts[1:]
+        await tg_command(update, context)
+        return
+
     if text == "💎 MLBB Diamonds":
         await server_product_shortcut(update, context, "Global")
         return
@@ -1643,6 +1852,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if text == "🎮 PUBG UC":
         await server_product_shortcut(update, context, "PUBG")
+        return
+    if text == "⭐ Telegram Stars":
+        await server_product_shortcut(update, context, "TGS")
+        return
+    if text == "👑 Telegram Premium":
+        await server_product_shortcut(update, context, "TGP")
         return
 
     if text == "🌍 Global":
@@ -1759,10 +1974,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📖 <b>Help</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
         "💎 MLBB Diamonds\n🔍 Check ML ID\n"
         "🎮 PUBG UC\n"
+        "⭐ Telegram Stars\n"
+        "👑 Telegram Premium\n"
         "💰 My Balance\n💳 Deposit\n\n"
         "🔹 <b>Order:</b>\n"
         "<code>.ml ID ZONE [SERVER] AMOUNT</code>\n"
-        "<code>.pg USER_ID AMOUNT</code>"
+        "<code>.pg USER_ID AMOUNT</code>\n"
+        "<code>.tg TARGET AMOUNT</code>"
     )
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
 
@@ -2205,6 +2423,7 @@ async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             order_info=order_info,
             product_amount=str(amount),
             user_info=user_info,
+            mc_price=mc_price,
         )
     )
 
@@ -2323,6 +2542,7 @@ async def handle_pg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             order_info=order_info,
             product_amount=str(amount_input),
             user_info=user_info,
+            mc_price=mc_price,
         )
     )
 
@@ -2342,6 +2562,124 @@ async def handle_pg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print("ORDER ALARM ERROR:", e)
 
     context.user_data.pop("pg_order", None)
+
+
+async def handle_tg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    order = context.user_data.get("tg_order")
+    if not order:
+        await query.edit_message_text("❌ <b>Order not found.</b>", parse_mode="HTML")
+        return
+
+    user = query.from_user
+    user_id = user.id
+
+    target = order["target"]
+    server = order["server"]
+    amount = order["amount"]
+    display_amount = order["display_amount"]
+    mc_price = order["mc_price"]
+    matched_product = order["product"]
+
+    user_balance = get_user_balance(user_id)
+    if user_balance < mc_price:
+        await query.edit_message_text("❌ <b>Insufficient balance.</b>", parse_mode="HTML")
+        context.user_data.pop("tg_order", None)
+        return
+
+    await query.edit_message_text("🛒 <b>Creating Order...</b>", parse_mode="HTML")
+
+    product = dict(matched_product)
+    data, error = create_transaction(product, target, "")
+
+    if error:
+        await query.edit_message_text(f"❌ <b>Order Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
+        context.user_data.pop("tg_order", None)
+        return
+
+    result = data.get("data", {})
+    transaction_id = result.get("id", "-")
+    status = result.get("status", "pending")
+    serial_number = result.get("serial_number", "")
+    order_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if deduct_user_balance(user_id, mc_price):
+        new_balance = get_user_balance(user_id)
+    else:
+        new_balance = user_balance
+
+    if server == "TGP":
+        emoji = "👑"
+        label = "Telegram Premium"
+        code_section = ""
+        if serial_number:
+            code_section = f"\n🎁 <b>Gift Code:</b>\n<code>{html.escape(str(serial_number))}</code>\n"
+    else:
+        emoji = "⭐"
+        label = "Telegram Stars"
+        code_section = ""
+
+    text = (
+        f"🛒 <b>{label} Order Created</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎯 Target: <code>{html.escape(target)}</code>\n\n"
+        f"{emoji} Product: <b>{html.escape(str(display_amount))}</b>\n"
+        f"🪙 Coin Price: <b>{mc_price:.3f} Coin</b>\n\n"
+        f"🆔 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
+        f"⏳ Status: <b>{html.escape(str(status).upper())}</b>\n"
+        f"{code_section}\n"
+        f"🪙 Balance: <b>{new_balance:.3f} Coin</b>"
+    )
+    sent_msg = await query.edit_message_text(text, parse_mode="HTML")
+
+    order_info = (
+        f"⭐ Game: <b>{label}</b>\n"
+        f"🎯 Target: <code>{html.escape(target)}</code>\n\n"
+        f"{emoji} Product: <b>{html.escape(str(display_amount))}</b>\n"
+        f"🪙 Coin Price: <b>{mc_price:.3f} Coin</b>\n\n"
+    )
+
+    uname = f"@{user.username}" if user.username else "—"
+    fname = user.first_name or "User"
+    user_info = (
+        f"👤 Name: <b>{html.escape(fname)}</b>\n"
+        f"🔗 Username: <b>{html.escape(uname)}</b>\n"
+        f"🆔 User ID: <code>{user_id}</code>\n\n"
+    )
+
+    asyncio.create_task(
+        auto_status_update(
+            context=context,
+            transaction_id=str(transaction_id),
+            user_id=user_id,
+            chat_id=query.message.chat_id,
+            message_id=sent_msg.message_id,
+            order_info=order_info,
+            product_amount=str(amount),
+            user_info=user_info,
+            mc_price=mc_price,
+        )
+    )
+
+    try:
+        alarm_text = (
+            f"🔔 <b>NEW {label.upper()} ORDER!</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👤 Name: <b>{html.escape(fname)}</b>\n"
+            f"🔗 Username: <b>{html.escape(uname)}</b>\n"
+            f"🆔 User ID: <code>{user_id}</code>\n\n"
+            f"{order_info}"
+        )
+        if serial_number:
+            alarm_text += f"🎁 Gift Code: <code>{html.escape(str(serial_number))}</code>\n\n"
+        alarm_text += (
+            f"🧾 Trx: <code>{html.escape(str(transaction_id))}</code>\n"
+            f"⏰ Time: <code>{order_time}</code>"
+        )
+        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
+        await context.bot.send_message(chat_id=alert_target, text=alarm_text, parse_mode="HTML")
+    except Exception as e:
+        print("ORDER ALARM ERROR:", e)
+
+    context.user_data.pop("tg_order", None)
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -2372,6 +2710,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("pg_order", None)
         await query.edit_message_text(
             "❌ <b>PUBG Order Cancelled</b>\n\nPress /start to begin again.",
+            parse_mode="HTML",
+        )
+        return
+
+    if data == "tg:confirm":
+        await handle_tg_confirm(update, context)
+        return
+    if data == "tg:reject":
+        context.user_data.pop("tg_order", None)
+        await query.edit_message_text(
+            "❌ <b>Telegram Order Cancelled</b>\n\nPress /start to begin again.",
             parse_mode="HTML",
         )
         return
@@ -2436,7 +2785,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = query.from_user.id
         user_balance = get_user_balance(user_id)
 
-        prompt = "🆔 Enter <b>Player ID</b>.\nExample: <code>12345678</code>"
+        if server in ("TGS", "TGP"):
+            if server == "TGP":
+                prompt = "📧 <b>Email</b> ထည့်ပါ။\nExample: <code>email@gmail.com</code>"
+            else:
+                prompt = "🎯 <b>Telegram Username</b> ထည့်ပါ။\nExample: <code>@username</code>"
+        else:
+            prompt = "🆔 Enter <b>Player ID</b>.\nExample: <code>12345678</code>"
 
         text = (
             "💎 <b>Selected</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -2513,7 +2868,6 @@ async def post_init(application: Application):
 
 async def post_shutdown(application: Application):
     print("🛑 Bot shutting down...")
-
 
 def main():
     if not BOT_TOKEN:
