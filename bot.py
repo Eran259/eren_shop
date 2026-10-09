@@ -1420,7 +1420,8 @@ async def show_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("💳 K-Pay", callback_data="recharge:kpay")],
-        [InlineKeyboardButton("📱 Wave Pay", callback_data="recharge:wave")],
+        [InlineKeyboardButton("💚 UAB Pay", callback_data="recharge:uab")],
+        [InlineKeyboardButton("❤️ AYA Pay", callback_data="recharge:aya")],
         [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
     ])
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
@@ -1431,9 +1432,9 @@ async def show_kpay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "💳 <b>KPAY | WALLET RECHARGE</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👤 Account Name: <b>Mg Myo Min</b>\n"
+        "👤 Account Name: <b>Thet Naing Swan</b>\n"
         "📱 Payment Number:\n"
-        "<code>09446787195</code>\n\n"
+        "<code>09766605879</code>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "💰 Enter the recharge amount in MMK.\n\n"
         "📌 Minimum Recharge — <b>5,000 MMK</b>\n\n"
@@ -1452,17 +1453,21 @@ async def show_kpay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
 
 
-async def show_wave(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_uab(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     text = (
-        "💳 <b>WAVE PAY | WALLET RECHARGE</b>\n"
+        "💚 <b>UAB PAY | WALLET RECHARGE</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👤 Account Name: <b>Mg Myo Min</b>\n"
+        "👤 Account Name: <b>Thet Naing Swan</b>\n"
         "📱 Payment Number:\n"
-        "<code>09446787195</code>\n\n"
+        "<code>09425160424</code>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "💰 Enter the recharge amount in MMK.\n\n"
         "📌 Minimum Recharge — <b>5,000 MMK</b>\n\n"
+        "💡 Example —\n"
+        "  5000\n"
+        "  10000\n"
+        "  20000\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "⚠️ Please verify the account number\n"
         "before making payment."
@@ -1472,6 +1477,34 @@ async def show_wave(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
     ])
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+async def show_aya(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    text = (
+        "❤️ <b>AYA PAY | WALLET RECHARGE</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👤 Account Name: <b>Hnin Hnin Soe</b>\n"
+        "📱 Payment Number:\n"
+        "<code>09678664100</code>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "💰 Enter the recharge amount in MMK.\n\n"
+        "📌 Minimum Recharge — <b>5,000 MMK</b>\n\n"
+        "💡 Example —\n"
+        "  5000\n"
+        "  10000\n"
+        "  20000\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "⚠️ Please verify the account number\n"
+        "before making payment."
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Back", callback_data="menu:recharge")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+
 
 # ============================================================
 # Chapter 16 — Referral System
