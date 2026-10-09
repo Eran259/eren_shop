@@ -15,6 +15,7 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 from telegram.ext import (
     Application,
@@ -105,10 +106,6 @@ MANUAL_PRODUCT_DB = os.path.join(DATA_DIR, "manual_product.db")
 print(f"📁 DATA_DIR: {DATA_DIR}")
 print(f"🔔 ALERT_CHAT_ID: {ALERT_CHAT_ID}")
 print(f"🧪 MELO_SANDBOX: {MELO_SANDBOX}")
-
-# ============================================================
-# အခန်း ၂ — Database Init (Tables)
-# ============================================================
 
 def init_access_db():
     conn = sqlite3.connect(ACCESS_DB)
@@ -284,10 +281,6 @@ def init_all_db():
     init_favorites_db()
     init_orders_db()
 
-# ============================================================
-# အခန်း ၃ — Access Control (User Approval)
-# ============================================================
-
 def get_access_status(user_id):
     if int(user_id) == ADMIN_ID:
         return "approved"
@@ -431,10 +424,6 @@ async def handle_access_callback(update, context):
 
     return True
 
-# ============================================================
-# အခန်း ၄ — Balance System
-# ============================================================
-
 def mc_to_ks(mc_amount):
     return mc_amount * (KS_PER_USD / MC_PER_USD)
 
@@ -482,10 +471,6 @@ def get_total_spent(user_id):
     conn.close()
     return row[0] if row else 0.0
 
-# ============================================================
-# အခန်း ၅ — Subscription System
-# ============================================================
-
 def get_subscription(user_id):
     conn = sqlite3.connect(SUBSCRIPTION_DB)
     row = conn.execute("SELECT expiry_date, status FROM subscriptions WHERE user_id=?", (int(user_id),)).fetchone()
@@ -528,10 +513,6 @@ def validate_license_key(license_key):
     except Exception:
         return None
 
-# ============================================================
-# အခန်း ၆ — User API
-# ============================================================
-
 def get_user_api(user_id):
     conn = sqlite3.connect(USER_API_DB)
     row = conn.execute("SELECT api_key, secret_key FROM user_api WHERE user_id=?", (int(user_id),)).fetchone()
@@ -539,10 +520,6 @@ def get_user_api(user_id):
     if row:
         return {"api_key": row[0], "secret_key": row[1]}
     return None
-
-# ============================================================
-# အခန်း ၇ — Manual Price
-# ============================================================
 
 def get_manual_price(server, amount):
     conn = sqlite3.connect(MANUAL_PRICE_DB)
@@ -576,10 +553,6 @@ def delete_manual_price(server, amount):
     conn.execute("DELETE FROM manual_price WHERE server=? AND amount=?", (server, amount))
     conn.commit()
     conn.close()
-
-# ============================================================
-# အခန်း ၈ — Manual Product
-# ============================================================
 
 def add_manual_product(server, amount, sku_code, display_name=None):
     conn = sqlite3.connect(MANUAL_PRODUCT_DB)
@@ -646,12 +619,7 @@ def get_manual_products_for_server(server):
         })
     return products
 
-# ============================================================
-# Chapter 9 — Backup/Restore (Cookie JSON)
-# ============================================================
-
 def create_backup_cookie():
-    """Save all bot data as Cookie JSON file"""
     backup = {
         "version": "1.0",
         "type": "cookie_backup",
@@ -660,7 +628,6 @@ def create_backup_cookie():
         "data": {}
     }
 
-    # Users + Balance
     conn = sqlite3.connect(USER_BALANCE_DB)
     rows = conn.execute("SELECT user_id, balance, referral_count, total_spent, updated_at FROM user_balance").fetchall()
     backup["data"]["users"] = [
@@ -669,7 +636,6 @@ def create_backup_cookie():
     ]
     conn.close()
 
-    # Access
     conn = sqlite3.connect(ACCESS_DB)
     rows = conn.execute("SELECT user_id, username, first_name, status, requested_at FROM bot_access").fetchall()
     backup["data"]["access"] = [
@@ -678,7 +644,6 @@ def create_backup_cookie():
     ]
     conn.close()
 
-    # Manual Prices
     conn = sqlite3.connect(MANUAL_PRICE_DB)
     rows = conn.execute("SELECT server, amount, mc_price, updated_at FROM manual_price").fetchall()
     backup["data"]["manual_prices"] = [
@@ -687,7 +652,6 @@ def create_backup_cookie():
     ]
     conn.close()
 
-    # Manual Products
     conn = sqlite3.connect(MANUAL_PRODUCT_DB)
     rows = conn.execute("SELECT server, amount, sku_code, display_name FROM manual_product").fetchall()
     backup["data"]["manual_products"] = [
@@ -696,7 +660,6 @@ def create_backup_cookie():
     ]
     conn.close()
 
-    # Subscriptions
     conn = sqlite3.connect(SUBSCRIPTION_DB)
     rows = conn.execute("SELECT user_id, expiry_date, status FROM subscriptions").fetchall()
     backup["data"]["subscriptions"] = [
@@ -704,7 +667,6 @@ def create_backup_cookie():
     ]
     conn.close()
 
-    # User API
     conn = sqlite3.connect(USER_API_DB)
     rows = conn.execute("SELECT user_id, api_key, secret_key FROM user_api").fetchall()
     backup["data"]["user_api"] = [
@@ -712,7 +674,6 @@ def create_backup_cookie():
     ]
     conn.close()
 
-    # Referrals
     conn = sqlite3.connect(USER_BALANCE_DB)
     rows = conn.execute("SELECT user_id, referred_user_id, rewarded, created_at FROM referrals").fetchall()
     backup["data"]["referrals"] = [
@@ -721,7 +682,6 @@ def create_backup_cookie():
     ]
     conn.close()
 
-    # Check-ins
     conn = sqlite3.connect(USER_BALANCE_DB)
     rows = conn.execute("SELECT user_id, checkin_date, reward, created_at FROM checkins").fetchall()
     backup["data"]["checkins"] = [
@@ -730,7 +690,6 @@ def create_backup_cookie():
     ]
     conn.close()
 
-    # Orders
     conn = sqlite3.connect(USER_BALANCE_DB)
     rows = conn.execute("""SELECT user_id, game, product, player_id, zone_id,
         price, status, transaction_id, created_at FROM orders""").fetchall()
@@ -746,12 +705,10 @@ def create_backup_cookie():
 
 
 def restore_backup_cookie(json_str):
-    """Restore bot data from Cookie JSON file"""
     try:
         backup = json.loads(json_str)
         data = backup.get("data", {})
 
-        # Users
         conn = sqlite3.connect(USER_BALANCE_DB)
         for u in data.get("users", []):
             conn.execute("""INSERT INTO user_balance (user_id, balance, referral_count, total_spent)
@@ -765,7 +722,6 @@ def restore_backup_cookie(json_str):
         conn.commit()
         conn.close()
 
-        # Access
         conn = sqlite3.connect(ACCESS_DB)
         for a in data.get("access", []):
             conn.execute("""INSERT INTO bot_access (user_id, username, first_name, status)
@@ -779,7 +735,6 @@ def restore_backup_cookie(json_str):
         conn.commit()
         conn.close()
 
-        # Manual Prices
         conn = sqlite3.connect(MANUAL_PRICE_DB)
         for p in data.get("manual_prices", []):
             conn.execute("""INSERT INTO manual_price (server, amount, mc_price)
@@ -789,7 +744,6 @@ def restore_backup_cookie(json_str):
         conn.commit()
         conn.close()
 
-        # Manual Products
         conn = sqlite3.connect(MANUAL_PRODUCT_DB)
         for p in data.get("manual_products", []):
             conn.execute("""INSERT INTO manual_product (server, amount, sku_code, display_name)
@@ -801,7 +755,6 @@ def restore_backup_cookie(json_str):
         conn.commit()
         conn.close()
 
-        # Subscriptions
         conn = sqlite3.connect(SUBSCRIPTION_DB)
         for s in data.get("subscriptions", []):
             conn.execute("""INSERT INTO subscriptions (user_id, expiry_date, status)
@@ -813,7 +766,6 @@ def restore_backup_cookie(json_str):
         conn.commit()
         conn.close()
 
-        # User API
         conn = sqlite3.connect(USER_API_DB)
         for u in data.get("user_api", []):
             conn.execute("""INSERT INTO user_api (user_id, api_key, secret_key)
@@ -825,7 +777,6 @@ def restore_backup_cookie(json_str):
         conn.commit()
         conn.close()
 
-        # Referrals
         conn = sqlite3.connect(USER_BALANCE_DB)
         for r in data.get("referrals", []):
             conn.execute("""INSERT OR IGNORE INTO referrals (user_id, referred_user_id, rewarded)
@@ -834,7 +785,6 @@ def restore_backup_cookie(json_str):
         conn.commit()
         conn.close()
 
-        # Check-ins
         conn = sqlite3.connect(USER_BALANCE_DB)
         for c in data.get("checkins", []):
             conn.execute("""INSERT OR IGNORE INTO checkins (user_id, checkin_date, reward)
@@ -843,7 +793,6 @@ def restore_backup_cookie(json_str):
         conn.commit()
         conn.close()
 
-        # Orders
         conn = sqlite3.connect(USER_BALANCE_DB)
         for o in data.get("orders", []):
             conn.execute("""INSERT INTO orders (user_id, game, product, player_id, zone_id, price, status, transaction_id)
@@ -857,10 +806,6 @@ def restore_backup_cookie(json_str):
         return True, None
     except Exception as e:
         return False, str(e)
-
-# ============================================================
-# Chapter 10 — Melostore API Functions
-# ============================================================
 
 def api_headers(user_id=None):
     if user_id:
@@ -980,10 +925,6 @@ async def get_transaction_detail(transaction_id):
     if error:
         return None, error
     return data.get("data", {}), None
-
-# ============================================================
-# Chapter 11 — Product Loading (Cache + Filter)
-# ============================================================
 
 PRODUCT_CACHE = {
     "Global": [], "Indonesia": [], "Malaysia": [], "Singapore": [],
@@ -1199,10 +1140,6 @@ def ensure_server_products(server):
     products = PRODUCT_CACHE.get(server, [])
     return products, PRODUCT_LAST_ERROR.get(server) if not products else None
 
-# ============================================================
-# Chapter 12 — Inline Keyboard Menus
-# ============================================================
-
 def main_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("💎 MLBB Diamond", callback_data="menu:mlbb")],
@@ -1283,12 +1220,13 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=11):
     buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
     return InlineKeyboardMarkup(buttons)
 
-# ============================================================
-# Chapter 13 — Start Handler
-# ============================================================
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
+
+    await update.message.reply_text(
+        "⏳ Loading...",
+        reply_markup=ReplyKeyboardRemove()
+    )
 
     user = update.effective_user
     user_id = user.id
@@ -1338,10 +1276,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_menu())
     else:
         await update.message.reply_text(text, parse_mode="HTML")
-
-# ============================================================
-# Chapter 14 — Wallet & Dashboard Handler
-# ============================================================
 
 async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1403,10 +1337,6 @@ async def show_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
     ])
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
-
-# ============================================================
-# Chapter 15 — Recharge (Deposit) Handler
-# ============================================================
 
 async def show_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1504,12 +1434,6 @@ async def show_aya(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
 
-
-
-# ============================================================
-# Chapter 16 — Referral System
-# ============================================================
-
 def get_referral_count(user_id):
     conn = sqlite3.connect(USER_BALANCE_DB)
     row = conn.execute("SELECT COUNT(*) FROM referrals WHERE user_id=?", (int(user_id),)).fetchone()
@@ -1552,10 +1476,6 @@ async def show_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
     ])
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
-
-# ============================================================
-# Chapter 17 — Daily Check-in
-# ============================================================
 
 def can_checkin_today(user_id):
     today = datetime.now().strftime("%Y-%m-%d")
@@ -1605,10 +1525,6 @@ async def show_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
 
-# ============================================================
-# Chapter 18 — Daily Mission
-# ============================================================
-
 def get_mission_progress(user_id):
     today = datetime.now().strftime("%Y-%m-%d")
     conn = sqlite3.connect(USER_BALANCE_DB)
@@ -1644,10 +1560,6 @@ async def show_mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
     ])
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
-
-# ============================================================
-# Chapter 19 — MLBB Order Handler
-# ============================================================
 
 async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -1769,10 +1681,6 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await checking_msg.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
 
-# ============================================================
-# Chapter 20 — PUBG Order Handler
-# ============================================================
-
 async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -1847,10 +1755,6 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
-
-# ============================================================
-# Chapter 21 — Telegram Order Handler
-# ============================================================
 
 async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -1981,10 +1885,6 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
-
-# ============================================================
-# Chapter 22 — Order Confirm Handlers
-# ============================================================
 
 async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -2338,19 +2238,12 @@ async def handle_tg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.pop("tg_order", None)
 
-# ============================================================
-# Chapter 23 — Admin Panel & Commands
-# ============================================================
-
 def admin_panel_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 Dashboard", callback_data="admin:dashboard")],
         [InlineKeyboardButton("💰 Price", callback_data="admin:price"),
          InlineKeyboardButton("📦 Product", callback_data="admin:product")],
         [InlineKeyboardButton("👥 Users", callback_data="admin:users")],
-        [InlineKeyboardButton("💳 Deposits", callback_data="admin:deposits")],
-        [InlineKeyboardButton("📋 Orders", callback_data="admin:orders")],
-        [InlineKeyboardButton("📢 Broadcast", callback_data="admin:broadcast")],
         [InlineKeyboardButton("💾 Backup (JSON)", callback_data="admin:backup")],
         [InlineKeyboardButton("📥 Restore (JSON)", callback_data="admin:restore")],
         [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
@@ -2512,8 +2405,6 @@ async def show_admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=admin_panel_menu())
 
 
-# ---------- Admin Text Commands ----------
-
 async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -2587,10 +2478,6 @@ async def unblock_user_command(update: Update, context: ContextTypes.DEFAULT_TYP
     set_access_status(user_id, "approved")
     await update.message.reply_text(f"✅ User <code>{user_id}</code> unblocked.", parse_mode="HTML")
 
-# ============================================================
-# Chapter 24 — Callback Router
-# ============================================================
-
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
@@ -2598,12 +2485,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data or ""
 
-    # ---------- Access Control ----------
     if data.startswith("access:"):
         await handle_access_callback(update, context)
         return
 
-    # ---------- Admin Check ----------
     if data.startswith("admin:"):
         if query.from_user.id != ADMIN_ID:
             await query.answer("❌ Admin only", show_alert=True)
@@ -2625,12 +2510,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await admin_restore(update, context)
         return
 
-    # ---------- User Access Check ----------
     if get_access_status(query.from_user.id) != "approved":
         await query.answer("🔐 Approval required.", show_alert=True)
         return
 
-    # ---------- Main Menu ----------
     if data == "menu:main":
         user_id = query.from_user.id
         balance = get_user_balance(user_id)
@@ -2672,15 +2555,16 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_mission(update, context)
         return
 
-    # ---------- Recharge Methods ----------
     if data == "recharge:kpay":
         await show_kpay(update, context)
         return
-    if data == "recharge:wave":
-        await show_wave(update, context)
+    if data == "recharge:uab":
+        await show_uab(update, context)
+        return
+    if data == "recharge:aya":
+        await show_aya(update, context)
         return
 
-    # ---------- Server Selection ----------
     if data == "back:servers":
         await query.edit_message_text("🌍 Choose a Server.", reply_markup=server_keyboard())
         return
@@ -2747,7 +2631,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode="HTML")
         return
 
-    # ---------- Order Confirm ----------
     if data == "ml:confirm":
         await handle_ml_confirm(update, context)
         return
@@ -2771,57 +2654,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop("tg_order", None)
         await query.edit_message_text("❌ <b>Telegram Order Cancelled</b>", parse_mode="HTML")
         return
-
-    # ---------- Deposit Approve/Reject ----------
-    if data.startswith("deposit:"):
-        if query.from_user.id != ADMIN_ID:
-            await query.answer("❌ Admin only", show_alert=True)
-            return
-        parts = data.split(":")
-        action, uid_text = parts[1], parts[2]
-        try:
-            user_id = int(uid_text)
-        except ValueError:
-            return
-        if action == "approve":
-            await query.answer("Use /addbalance.", show_alert=True)
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"💡 <code>/addbalance {user_id} 300</code>",
-                parse_mode="HTML",
-            )
-        elif action == "reject":
-            try:
-                await query.edit_message_caption(caption=(query.message.caption or "") + "\n\n<b>❌ REJECTED</b>", parse_mode="HTML")
-            except Exception:
-                pass
-            try:
-                await context.bot.send_message(chat_id=user_id, text="❌ <b>Deposit rejected.</b>", parse_mode="HTML")
-            except Exception as e:
-                print("REJECT DM ERROR:", e)
-        return
-
-    # ---------- Reply to User ----------
-    if data.startswith("reply:"):
-        if query.from_user.id != ADMIN_ID:
-            await query.answer("❌ Admin only", show_alert=True)
-            return
-        try:
-            user_id = int(data.split(":")[1])
-        except Exception:
-            return
-        context.user_data["reply_to"] = user_id
-        context.user_data["state"] = "admin_reply"
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"↩️ Reply to <code>{user_id}</code>\n\nType your reply.",
-            parse_mode="HTML",
-        )
-        return
-
-# ============================================================
-# Chapter 25 — Main Function (Final)
-# ============================================================
 
 async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.document:
@@ -2951,7 +2783,6 @@ def main():
         .build()
     )
 
-    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", show_admin_panel))
     app.add_handler(CommandHandler("addbalance", add_balance_command))
@@ -2970,3 +2801,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
