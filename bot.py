@@ -1,24 +1,18 @@
 import os
 import re
+import json
 import uuid
 import html
 import sqlite3
 import requests
 import time
-import threading
-import hashlib
-import hmac
-import base64
-import shutil
-import zipfile
-import io
 import asyncio
+import io
 from collections import defaultdict
 from datetime import datetime, timedelta
 
 from telegram import (
     Update,
-    ReplyKeyboardMarkup,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
@@ -32,30 +26,20 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-MELO_API_KEY = os.getenv("MELO_API_KEY", "")
-MELO_SECRET_KEY = os.getenv("MELO_SECRET_KEY", "")
-MELO_BASE_URL = "https://api.melostore.id"
-
-MELO_SANDBOX = os.getenv("MELO_SANDBOX", "true").lower() == "true"
-
-LICENSE_KEY = os.getenv("LICENSE_KEY", "")
-LICENSE_SECRET = "EREN_SHOP_SECRET_2026"
-
-MC_PROFIT_MARGIN = 1.0058
-MC_ALERT_THRESHOLD = 100
-
-MC_PER_USD = 17.98786
-KS_PER_USD = 4450
-
 ADMIN_ID = 5698123475
 ALERT_CHAT_ID = int(os.getenv("ALERT_CHAT_ID", "0"))
 
-AMOUNT_ALIASES = {
-    "wp": "weeklypass",
-    "tp": "twilightpass",
-    "web": "weeklyelitebundle",
-    "meb": "monthlyepicbundle",
-}
+MELO_BASE_URL = "https://api.melostore.id"
+MELO_API_KEY = os.getenv("MELO_API_KEY", "")
+MELO_SECRET_KEY = os.getenv("MELO_SECRET_KEY", "")
+MELO_SANDBOX = os.getenv("MELO_SANDBOX", "true").lower() == "true"
+
+MC_PER_USD = 17.98786
+KS_PER_USD = 4450
+MC_PROFIT_MARGIN = 1.0058
+
+LICENSE_KEY = os.getenv("LICENSE_KEY", "")
+LICENSE_SECRET = "EREN_SHOP_SECRET_2026"
 
 SERVER_MAP = {
     "gl": "Global", "global": "Global",
@@ -71,58 +55,37 @@ SERVER_MAP = {
 }
 
 SERVER_FLAGS = {
-    "Global": "🌍",
-    "Indonesia": "🇮🇩",
-    "Malaysia": "🇲🇾",
-    "Singapore": "🇸🇬",
-    "Turkey": "🇹🇷",
-    "Philippines": "🇵🇭",
-    "Brazil": "🇧🇷",
-    "PUBG": "🎮",
-    "TGS": "⭐",
-    "TGP": "👑",
+    "Global": "🌍", "Indonesia": "🇮🇩", "Malaysia": "🇲🇾",
+    "Singapore": "🇸🇬", "Turkey": "🇹🇷", "Philippines": "🇵🇭",
+    "Brazil": "🇧🇷", "PUBG": "🎮", "TGS": "⭐", "TGP": "👑",
 }
 
-# ✅ MLBB SKU Prefix → Server
 MLBB_SKU_PREFIX = {
-    "mlgl": "Global",
-    "mlid": "Indonesia",
-    "mlmy": "Malaysia",
-    "mlsg": "Singapore",
-    "mltr": "Turkey",
-    "mlph": "Philippines",
+    "mlgl": "Global", "mlid": "Indonesia", "mlmy": "Malaysia",
+    "mlsg": "Singapore", "mltr": "Turkey", "mlph": "Philippines",
     "mlbr": "Brazil",
 }
 
-# ✅ Smart SKU Prefix
 SMART_SKU_PREFIX = {
-    "smartmlgl": "Global",
-    "smartmlid": "Indonesia",
-    "smartmlmy": "Malaysia",
-    "smartmlsg": "Singapore",
-    "smartmltr": "Turkey",
-    "smartmlph": "Philippines",
+    "smartmlgl": "Global", "smartmlid": "Indonesia",
+    "smartmlmy": "Malaysia", "smartmlsg": "Singapore",
+    "smartmltr": "Turkey", "smartmlph": "Philippines",
     "smartmlbr": "Brazil",
 }
 
 SMART_BRAND_IDS = {
-    "Global": 316,
-    "Indonesia": None,
-    "Malaysia": None,
-    "Singapore": None,
-    "Turkey": None,
-    "Philippines": None,
-    "Brazil": None,
+    "Global": 316, "Indonesia": None, "Malaysia": None,
+    "Singapore": None, "Turkey": None, "Philippines": None, "Brazil": None,
 }
 
 PUBG_FALLBACK_SKUS = {
-    "60": [
-        "PUBGMGL60U-S12A",
-        "PUBGMGL60U-S7",
-        "PUBGMGL60U-S13",
-        "PUBGMGL60UCO-S11",
-        "PUBGMGL60U-S10",
-    ],
+    "60": ["PUBGMGL60U-S12A", "PUBGMGL60U-S7", "PUBGMGL60U-S13",
+           "PUBGMGL60UCO-S11", "PUBGMGL60U-S10"],
+}
+
+AMOUNT_ALIASES = {
+    "wp": "weeklypass", "tp": "twilightpass",
+    "web": "weeklyelitebundle", "meb": "monthlyepicbundle",
 }
 
 DATA_DIR = os.getenv("DATA_DIR", "/data")
@@ -143,9 +106,9 @@ print(f"📁 DATA_DIR: {DATA_DIR}")
 print(f"🔔 ALERT_CHAT_ID: {ALERT_CHAT_ID}")
 print(f"🧪 MELO_SANDBOX: {MELO_SANDBOX}")
 
-
-def mc_to_ks(mc_amount):
-    return mc_amount * (KS_PER_USD / MC_PER_USD)
+# ============================================================
+# အခန်း ၂ — Database Init (Tables)
+# ============================================================
 
 def init_access_db():
     conn = sqlite3.connect(ACCESS_DB)
@@ -158,6 +121,172 @@ def init_access_db():
     conn.commit()
     conn.close()
 
+
+def init_balance_db():
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS user_balance (
+        user_id INTEGER PRIMARY KEY,
+        balance REAL DEFAULT 0.0,
+        referral_count INTEGER DEFAULT 0,
+        total_spent REAL DEFAULT 0.0,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+    conn.commit()
+    conn.close()
+
+
+def init_subscription_db():
+    conn = sqlite3.connect(SUBSCRIPTION_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS subscriptions (
+        user_id INTEGER PRIMARY KEY,
+        expiry_date TEXT, status TEXT DEFAULT 'active',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+    conn.commit()
+    conn.close()
+
+
+def init_user_api_db():
+    conn = sqlite3.connect(USER_API_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS user_api (
+        user_id INTEGER PRIMARY KEY,
+        api_key TEXT, secret_key TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+    conn.commit()
+    conn.close()
+
+
+def init_manual_price_db():
+    conn = sqlite3.connect(MANUAL_PRICE_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS manual_price (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server TEXT NOT NULL, amount TEXT NOT NULL,
+        mc_price REAL NOT NULL,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(server, amount)
+    )""")
+    conn.commit()
+    conn.close()
+
+
+def init_manual_product_db():
+    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS manual_product (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server TEXT NOT NULL, amount TEXT NOT NULL,
+        sku_code TEXT, display_name TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(server, amount)
+    )""")
+    conn.commit()
+    conn.close()
+
+
+def init_referral_db():
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        referred_user_id INTEGER UNIQUE,
+        rewarded INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+    conn.commit()
+    conn.close()
+
+
+def init_checkin_db():
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS checkins (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        checkin_date TEXT NOT NULL,
+        reward INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, checkin_date)
+    )""")
+    conn.commit()
+    conn.close()
+
+
+def init_mission_db():
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS missions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        mission_date TEXT NOT NULL,
+        progress INTEGER DEFAULT 0,
+        target INTEGER DEFAULT 5,
+        claimed INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, mission_date)
+    )""")
+    conn.commit()
+    conn.close()
+
+
+def init_feedback_db():
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS feedbacks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        message TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+    conn.commit()
+    conn.close()
+
+
+def init_favorites_db():
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS favorites (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        server TEXT NOT NULL,
+        amount TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, server, amount)
+    )""")
+    conn.commit()
+    conn.close()
+
+
+def init_orders_db():
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    conn.execute("""CREATE TABLE IF NOT EXISTS orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        game TEXT NOT NULL,
+        product TEXT NOT NULL,
+        player_id TEXT,
+        zone_id TEXT,
+        price REAL DEFAULT 0.0,
+        status TEXT DEFAULT 'pending',
+        transaction_id TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+    conn.commit()
+    conn.close()
+
+
+def init_all_db():
+    init_access_db()
+    init_balance_db()
+    init_subscription_db()
+    init_user_api_db()
+    init_manual_price_db()
+    init_manual_product_db()
+    init_referral_db()
+    init_checkin_db()
+    init_mission_db()
+    init_feedback_db()
+    init_favorites_db()
+    init_orders_db()
+
+# ============================================================
+# အခန်း ၃ — Access Control (User Approval)
+# ============================================================
 
 def get_access_status(user_id):
     if int(user_id) == ADMIN_ID:
@@ -194,275 +323,6 @@ def access_request_keyboard(user_id):
         InlineKeyboardButton("❌ Reject", callback_data=f"access:reject:{user_id}"),
     ]])
 
-def init_balance_db():
-    conn = sqlite3.connect(USER_BALANCE_DB)
-    conn.execute("""CREATE TABLE IF NOT EXISTS user_balance (
-        user_id INTEGER PRIMARY KEY,
-        balance REAL DEFAULT 0.0,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )""")
-    conn.commit()
-    conn.close()
-
-
-def get_user_balance(user_id):
-    conn = sqlite3.connect(USER_BALANCE_DB)
-    row = conn.execute("SELECT balance FROM user_balance WHERE user_id=?", (int(user_id),)).fetchone()
-    conn.close()
-    return row[0] if row else 0.0
-
-
-def add_user_balance(user_id, amount):
-    conn = sqlite3.connect(USER_BALANCE_DB)
-    conn.execute("""INSERT INTO user_balance (user_id, balance, updated_at)
-        VALUES (?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(user_id) DO UPDATE SET
-        balance = balance + ?, updated_at = CURRENT_TIMESTAMP
-    """, (int(user_id), float(amount), float(amount)))
-    conn.commit()
-    conn.close()
-
-
-def deduct_user_balance(user_id, amount):
-    conn = sqlite3.connect(USER_BALANCE_DB)
-    conn.execute("""UPDATE user_balance SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = ? AND balance >= ?
-    """, (float(amount), int(user_id), float(amount)))
-    affected = conn.total_changes
-    conn.commit()
-    conn.close()
-    return affected > 0
-
-def init_subscription_db():
-    conn = sqlite3.connect(SUBSCRIPTION_DB)
-    conn.execute("""CREATE TABLE IF NOT EXISTS subscriptions (
-        user_id INTEGER PRIMARY KEY,
-        expiry_date TEXT, status TEXT DEFAULT 'active',
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )""")
-    conn.commit()
-    conn.close()
-
-
-def get_subscription(user_id):
-    conn = sqlite3.connect(SUBSCRIPTION_DB)
-    row = conn.execute("SELECT expiry_date, status FROM subscriptions WHERE user_id=?", (int(user_id),)).fetchone()
-    conn.close()
-    if row:
-        return {"expiry_date": row[0], "status": row[1]}
-    return None
-
-
-def set_subscription(user_id, days=30):
-    expiry = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
-    conn = sqlite3.connect(SUBSCRIPTION_DB)
-    conn.execute("""INSERT INTO subscriptions (user_id, expiry_date, status)
-        VALUES (?, ?, 'active')
-        ON CONFLICT(user_id) DO UPDATE SET expiry_date = ?, status = 'active'
-    """, (int(user_id), expiry, expiry))
-    conn.commit()
-    conn.close()
-    return expiry
-
-
-def validate_license_key(license_key):
-    try:
-        decoded = base64.b64decode(license_key).decode()
-        parts = decoded.split("|")
-        if len(parts) != 3:
-            return None
-        user_id, expiry_date, signature = parts
-        expected_sig = hmac.new(LICENSE_SECRET.encode(), f"{user_id}|{expiry_date}".encode(), hashlib.sha256).hexdigest()[:16]
-        if signature != expected_sig:
-            return None
-        return {"user_id": user_id, "expiry_date": expiry_date}
-    except Exception:
-        return None
-
-def init_user_api_db():
-    conn = sqlite3.connect(USER_API_DB)
-    conn.execute("""CREATE TABLE IF NOT EXISTS user_api (
-        user_id INTEGER PRIMARY KEY,
-        api_key TEXT, secret_key TEXT,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )""")
-    conn.commit()
-    conn.close()
-
-
-def get_user_api(user_id):
-    conn = sqlite3.connect(USER_API_DB)
-    row = conn.execute("SELECT api_key, secret_key FROM user_api WHERE user_id=?", (int(user_id),)).fetchone()
-    conn.close()
-    if row:
-        return {"api_key": row[0], "secret_key": row[1]}
-    return None
-
-def init_manual_price_db():
-    conn = sqlite3.connect(MANUAL_PRICE_DB)
-    conn.execute("""CREATE TABLE IF NOT EXISTS manual_price (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        server TEXT NOT NULL, amount TEXT NOT NULL,
-        mc_price REAL NOT NULL,
-        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(server, amount)
-    )""")
-    conn.commit()
-    conn.close()
-
-
-def get_manual_price(server, amount):
-    conn = sqlite3.connect(MANUAL_PRICE_DB)
-    row = conn.execute("SELECT mc_price FROM manual_price WHERE server=? AND amount=?", (server, amount)).fetchone()
-    conn.close()
-    return {"mc_price": row[0]} if row else None
-
-
-def set_manual_price(server, amount, mc_price):
-    conn = sqlite3.connect(MANUAL_PRICE_DB)
-    conn.execute("""INSERT INTO manual_price (server, amount, mc_price, updated_at)
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(server, amount) DO UPDATE SET mc_price = ?, updated_at = CURRENT_TIMESTAMP
-    """, (server, amount, float(mc_price), float(mc_price)))
-    conn.commit()
-    conn.close()
-
-
-def get_all_manual_prices(server=None):
-    conn = sqlite3.connect(MANUAL_PRICE_DB)
-    if server:
-        rows = conn.execute("SELECT server, amount, mc_price FROM manual_price WHERE server=? ORDER BY amount", (server,)).fetchall()
-    else:
-        rows = conn.execute("SELECT server, amount, mc_price FROM manual_price ORDER BY server, amount").fetchall()
-    conn.close()
-    return rows
-
-
-def delete_manual_price(server, amount):
-    conn = sqlite3.connect(MANUAL_PRICE_DB)
-    conn.execute("DELETE FROM manual_price WHERE server=? AND amount=?", (server, amount))
-    conn.commit()
-    conn.close()
-
-def init_manual_product_db():
-    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
-    conn.execute("""CREATE TABLE IF NOT EXISTS manual_product (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        server TEXT NOT NULL, amount TEXT NOT NULL,
-        sku_code TEXT, display_name TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(server, amount)
-    )""")
-    conn.commit()
-    conn.close()
-
-
-def add_manual_product(server, amount, sku_code, display_name=None):
-    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
-    try:
-        conn.execute("""INSERT INTO manual_product
-            (server, amount, sku_code, display_name)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(server, amount) DO UPDATE SET
-            sku_code=excluded.sku_code, display_name=excluded.display_name
-        """, (server, amount, sku_code or "", display_name or f"{amount}"))
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"Add Manual Product Error: {e}")
-        return False
-    finally:
-        conn.close()
-
-
-def delete_manual_product(server, amount):
-    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
-    conn.execute("DELETE FROM manual_product WHERE server=? AND amount=?", (server, amount))
-    affected = conn.total_changes
-    conn.commit()
-    conn.close()
-    return affected > 0
-
-
-def get_all_manual_products(server=None):
-    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
-    if server:
-        rows = conn.execute("SELECT server, amount, sku_code, display_name FROM manual_product WHERE server=? ORDER BY amount", (server,)).fetchall()
-    else:
-        rows = conn.execute("SELECT server, amount, sku_code, display_name FROM manual_product ORDER BY server, amount").fetchall()
-    conn.close()
-    return rows
-
-
-def get_manual_products_for_server(server):
-    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
-    rows = conn.execute("SELECT server, amount, sku_code, display_name FROM manual_product WHERE server=?", (server,)).fetchall()
-    conn.close()
-    products = []
-    for srv, amount, sku, display_name in rows:
-        if srv in ("Global", "Indonesia", "Malaysia", "Singapore", "Turkey", "Philippines", "Brazil"):
-            game_type = "MLBB"
-        elif srv == "PUBG":
-            game_type = "PUBG"
-        elif srv in ("TGS", "TGP"):
-            game_type = "Telegram"
-        else:
-            game_type = "MLBB"
-
-        products.append({
-            "server": srv,
-            "amount": amount,
-            "display_name": display_name or amount,
-            "sku_code": sku,
-            "name": display_name or amount,
-            "type_name": "Manual",
-            "is_manual": True,
-            "price": 999999999,
-            "game_type": game_type,
-        })
-    return products
-
-def create_backup_zip():
-    try:
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for db_file in [ACCESS_DB, USER_BALANCE_DB, SUBSCRIPTION_DB, USER_API_DB, MANUAL_PRICE_DB, MANUAL_PRODUCT_DB]:
-                if os.path.exists(db_file):
-                    zipf.write(db_file, os.path.basename(db_file))
-        zip_buffer.seek(0)
-        return zip_buffer
-    except Exception as e:
-        print(f"Backup ZIP Error: {e}")
-        return None
-
-
-def restore_backup_zip(zip_bytes):
-    try:
-        zip_buffer = io.BytesIO(zip_bytes)
-        with zipfile.ZipFile(zip_buffer, 'r') as zipf:
-            for file_name in zipf.namelist():
-                if file_name.endswith('.db'):
-                    target_path = os.path.join(DATA_DIR, file_name)
-                    with open(target_path, 'wb') as f:
-                        f.write(zipf.read(file_name))
-        return True
-    except Exception as e:
-        print(f"Restore Error: {e}")
-        return False
-
-
-def backup_databases():
-    try:
-        backup_dir = os.path.join(DATA_DIR, "backups")
-        os.makedirs(backup_dir, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        for db_file in [ACCESS_DB, USER_BALANCE_DB, SUBSCRIPTION_DB, USER_API_DB, MANUAL_PRICE_DB, MANUAL_PRODUCT_DB]:
-            if os.path.exists(db_file):
-                backup_file = os.path.join(backup_dir, f"{os.path.basename(db_file)}_{timestamp}.bak")
-                shutil.copy2(db_file, backup_file)
-        print(f"✅ Backup: {backup_dir}")
-    except Exception as e:
-        print(f"⚠️ Backup failed: {e}")
 
 async def request_access(update, context, force_request=False):
     user = update.effective_user
@@ -571,23 +431,436 @@ async def handle_access_callback(update, context):
 
     return True
 
-PRODUCT_CACHE = {
-    "Global": [],
-    "Indonesia": [],
-    "Malaysia": [],
-    "Singapore": [],
-    "Turkey": [],
-    "Philippines": [],
-    "Brazil": [],
-    "PUBG": [],
-    "TGS": [],
-    "TGP": [],
-}
-LAST_PRODUCTS_LOAD = 0
-PRODUCT_CACHE_TTL = 300
-PRODUCT_LOAD_LOCK = threading.Lock()
-PRODUCT_LAST_ERROR = {}
+# ============================================================
+# အခန်း ၄ — Balance System
+# ============================================================
 
+def mc_to_ks(mc_amount):
+    return mc_amount * (KS_PER_USD / MC_PER_USD)
+
+
+def get_user_balance(user_id):
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    row = conn.execute("SELECT balance FROM user_balance WHERE user_id=?", (int(user_id),)).fetchone()
+    conn.close()
+    return row[0] if row else 0.0
+
+
+def add_user_balance(user_id, amount):
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    conn.execute("""INSERT INTO user_balance (user_id, balance, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+        balance = balance + ?, updated_at = CURRENT_TIMESTAMP
+    """, (int(user_id), float(amount), float(amount)))
+    conn.commit()
+    conn.close()
+
+
+def deduct_user_balance(user_id, amount):
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    conn.execute("""UPDATE user_balance SET balance = balance - ?, updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ? AND balance >= ?
+    """, (float(amount), int(user_id), float(amount)))
+    affected = conn.total_changes
+    conn.commit()
+    conn.close()
+    return affected > 0
+
+
+def add_total_spent(user_id, amount):
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    conn.execute("""UPDATE user_balance SET total_spent = total_spent + ? WHERE user_id = ?
+    """, (float(amount), int(user_id)))
+    conn.commit()
+    conn.close()
+
+
+def get_total_spent(user_id):
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    row = conn.execute("SELECT total_spent FROM user_balance WHERE user_id=?", (int(user_id),)).fetchone()
+    conn.close()
+    return row[0] if row else 0.0
+
+# ============================================================
+# အခန်း ၅ — Subscription System
+# ============================================================
+
+def get_subscription(user_id):
+    conn = sqlite3.connect(SUBSCRIPTION_DB)
+    row = conn.execute("SELECT expiry_date, status FROM subscriptions WHERE user_id=?", (int(user_id),)).fetchone()
+    conn.close()
+    if row:
+        return {"expiry_date": row[0], "status": row[1]}
+    return None
+
+
+def set_subscription(user_id, days=30):
+    expiry = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
+    conn = sqlite3.connect(SUBSCRIPTION_DB)
+    conn.execute("""INSERT INTO subscriptions (user_id, expiry_date, status)
+        VALUES (?, ?, 'active')
+        ON CONFLICT(user_id) DO UPDATE SET expiry_date = ?, status = 'active'
+    """, (int(user_id), expiry, expiry))
+    conn.commit()
+    conn.close()
+    return expiry
+
+
+def validate_license_key(license_key):
+    import hashlib
+    import hmac
+    import base64
+    try:
+        decoded = base64.b64decode(license_key).decode()
+        parts = decoded.split("|")
+        if len(parts) != 3:
+            return None
+        user_id, expiry_date, signature = parts
+        expected_sig = hmac.new(
+            LICENSE_SECRET.encode(),
+            f"{user_id}|{expiry_date}".encode(),
+            hashlib.sha256
+        ).hexdigest()[:16]
+        if signature != expected_sig:
+            return None
+        return {"user_id": user_id, "expiry_date": expiry_date}
+    except Exception:
+        return None
+
+# ============================================================
+# အခန်း ၆ — User API
+# ============================================================
+
+def get_user_api(user_id):
+    conn = sqlite3.connect(USER_API_DB)
+    row = conn.execute("SELECT api_key, secret_key FROM user_api WHERE user_id=?", (int(user_id),)).fetchone()
+    conn.close()
+    if row:
+        return {"api_key": row[0], "secret_key": row[1]}
+    return None
+
+# ============================================================
+# အခန်း ၇ — Manual Price
+# ============================================================
+
+def get_manual_price(server, amount):
+    conn = sqlite3.connect(MANUAL_PRICE_DB)
+    row = conn.execute("SELECT mc_price FROM manual_price WHERE server=? AND amount=?", (server, amount)).fetchone()
+    conn.close()
+    return {"mc_price": row[0]} if row else None
+
+
+def set_manual_price(server, amount, mc_price):
+    conn = sqlite3.connect(MANUAL_PRICE_DB)
+    conn.execute("""INSERT INTO manual_price (server, amount, mc_price, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(server, amount) DO UPDATE SET mc_price = ?, updated_at = CURRENT_TIMESTAMP
+    """, (server, amount, float(mc_price), float(mc_price)))
+    conn.commit()
+    conn.close()
+
+
+def get_all_manual_prices(server=None):
+    conn = sqlite3.connect(MANUAL_PRICE_DB)
+    if server:
+        rows = conn.execute("SELECT server, amount, mc_price FROM manual_price WHERE server=? ORDER BY amount", (server,)).fetchall()
+    else:
+        rows = conn.execute("SELECT server, amount, mc_price FROM manual_price ORDER BY server, amount").fetchall()
+    conn.close()
+    return rows
+
+
+def delete_manual_price(server, amount):
+    conn = sqlite3.connect(MANUAL_PRICE_DB)
+    conn.execute("DELETE FROM manual_price WHERE server=? AND amount=?", (server, amount))
+    conn.commit()
+    conn.close()
+
+# ============================================================
+# အခန်း ၈ — Manual Product
+# ============================================================
+
+def add_manual_product(server, amount, sku_code, display_name=None):
+    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
+    try:
+        conn.execute("""INSERT INTO manual_product
+            (server, amount, sku_code, display_name)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(server, amount) DO UPDATE SET
+            sku_code=excluded.sku_code, display_name=excluded.display_name
+        """, (server, amount, sku_code or "", display_name or f"{amount}"))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"Add Manual Product Error: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def delete_manual_product(server, amount):
+    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
+    conn.execute("DELETE FROM manual_product WHERE server=? AND amount=?", (server, amount))
+    affected = conn.total_changes
+    conn.commit()
+    conn.close()
+    return affected > 0
+
+
+def get_all_manual_products(server=None):
+    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
+    if server:
+        rows = conn.execute("SELECT server, amount, sku_code, display_name FROM manual_product WHERE server=? ORDER BY amount", (server,)).fetchall()
+    else:
+        rows = conn.execute("SELECT server, amount, sku_code, display_name FROM manual_product ORDER BY server, amount").fetchall()
+    conn.close()
+    return rows
+
+
+def get_manual_products_for_server(server):
+    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
+    rows = conn.execute("SELECT server, amount, sku_code, display_name FROM manual_product WHERE server=?", (server,)).fetchall()
+    conn.close()
+    products = []
+    for srv, amount, sku, display_name in rows:
+        if srv in ("Global", "Indonesia", "Malaysia", "Singapore", "Turkey", "Philippines", "Brazil"):
+            game_type = "MLBB"
+        elif srv == "PUBG":
+            game_type = "PUBG"
+        elif srv in ("TGS", "TGP"):
+            game_type = "Telegram"
+        else:
+            game_type = "MLBB"
+
+        products.append({
+            "server": srv,
+            "amount": amount,
+            "display_name": display_name or amount,
+            "sku_code": sku,
+            "name": display_name or amount,
+            "type_name": "Manual",
+            "is_manual": True,
+            "price": 999999999,
+            "game_type": game_type,
+        })
+    return products
+
+# ============================================================
+# Chapter 9 — Backup/Restore (Cookie JSON)
+# ============================================================
+
+def create_backup_cookie():
+    """Save all bot data as Cookie JSON file"""
+    backup = {
+        "version": "1.0",
+        "type": "cookie_backup",
+        "backup_date": datetime.now().isoformat(),
+        "bot_name": "Eren's Diamond Bot",
+        "data": {}
+    }
+
+    # Users + Balance
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    rows = conn.execute("SELECT user_id, balance, referral_count, total_spent, updated_at FROM user_balance").fetchall()
+    backup["data"]["users"] = [
+        {"user_id": r[0], "balance": r[1], "referral_count": r[2],
+         "total_spent": r[3], "updated_at": r[4]} for r in rows
+    ]
+    conn.close()
+
+    # Access
+    conn = sqlite3.connect(ACCESS_DB)
+    rows = conn.execute("SELECT user_id, username, first_name, status, requested_at FROM bot_access").fetchall()
+    backup["data"]["access"] = [
+        {"user_id": r[0], "username": r[1], "first_name": r[2],
+         "status": r[3], "requested_at": r[4]} for r in rows
+    ]
+    conn.close()
+
+    # Manual Prices
+    conn = sqlite3.connect(MANUAL_PRICE_DB)
+    rows = conn.execute("SELECT server, amount, mc_price, updated_at FROM manual_price").fetchall()
+    backup["data"]["manual_prices"] = [
+        {"server": r[0], "amount": r[1], "mc_price": r[2],
+         "updated_at": r[3]} for r in rows
+    ]
+    conn.close()
+
+    # Manual Products
+    conn = sqlite3.connect(MANUAL_PRODUCT_DB)
+    rows = conn.execute("SELECT server, amount, sku_code, display_name FROM manual_product").fetchall()
+    backup["data"]["manual_products"] = [
+        {"server": r[0], "amount": r[1], "sku_code": r[2],
+         "display_name": r[3]} for r in rows
+    ]
+    conn.close()
+
+    # Subscriptions
+    conn = sqlite3.connect(SUBSCRIPTION_DB)
+    rows = conn.execute("SELECT user_id, expiry_date, status FROM subscriptions").fetchall()
+    backup["data"]["subscriptions"] = [
+        {"user_id": r[0], "expiry_date": r[1], "status": r[2]} for r in rows
+    ]
+    conn.close()
+
+    # User API
+    conn = sqlite3.connect(USER_API_DB)
+    rows = conn.execute("SELECT user_id, api_key, secret_key FROM user_api").fetchall()
+    backup["data"]["user_api"] = [
+        {"user_id": r[0], "api_key": r[1], "secret_key": r[2]} for r in rows
+    ]
+    conn.close()
+
+    # Referrals
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    rows = conn.execute("SELECT user_id, referred_user_id, rewarded, created_at FROM referrals").fetchall()
+    backup["data"]["referrals"] = [
+        {"user_id": r[0], "referred_user_id": r[1],
+         "rewarded": r[2], "created_at": r[3]} for r in rows
+    ]
+    conn.close()
+
+    # Check-ins
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    rows = conn.execute("SELECT user_id, checkin_date, reward, created_at FROM checkins").fetchall()
+    backup["data"]["checkins"] = [
+        {"user_id": r[0], "checkin_date": r[1],
+         "reward": r[2], "created_at": r[3]} for r in rows
+    ]
+    conn.close()
+
+    # Orders
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    rows = conn.execute("""SELECT user_id, game, product, player_id, zone_id,
+        price, status, transaction_id, created_at FROM orders""").fetchall()
+    backup["data"]["orders"] = [
+        {"user_id": r[0], "game": r[1], "product": r[2],
+         "player_id": r[3], "zone_id": r[4], "price": r[5],
+         "status": r[6], "transaction_id": r[7],
+         "created_at": r[8]} for r in rows
+    ]
+    conn.close()
+
+    return json.dumps(backup, indent=2, ensure_ascii=False)
+
+
+def restore_backup_cookie(json_str):
+    """Restore bot data from Cookie JSON file"""
+    try:
+        backup = json.loads(json_str)
+        data = backup.get("data", {})
+
+        # Users
+        conn = sqlite3.connect(USER_BALANCE_DB)
+        for u in data.get("users", []):
+            conn.execute("""INSERT INTO user_balance (user_id, balance, referral_count, total_spent)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                balance=excluded.balance,
+                referral_count=excluded.referral_count,
+                total_spent=excluded.total_spent
+            """, (u["user_id"], u.get("balance", 0.0),
+                  u.get("referral_count", 0), u.get("total_spent", 0.0)))
+        conn.commit()
+        conn.close()
+
+        # Access
+        conn = sqlite3.connect(ACCESS_DB)
+        for a in data.get("access", []):
+            conn.execute("""INSERT INTO bot_access (user_id, username, first_name, status)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                username=excluded.username,
+                first_name=excluded.first_name,
+                status=excluded.status
+            """, (a["user_id"], a.get("username", ""),
+                  a.get("first_name", ""), a.get("status", "pending")))
+        conn.commit()
+        conn.close()
+
+        # Manual Prices
+        conn = sqlite3.connect(MANUAL_PRICE_DB)
+        for p in data.get("manual_prices", []):
+            conn.execute("""INSERT INTO manual_price (server, amount, mc_price)
+                VALUES (?, ?, ?)
+                ON CONFLICT(server, amount) DO UPDATE SET mc_price=excluded.mc_price
+            """, (p["server"], p["amount"], p["mc_price"]))
+        conn.commit()
+        conn.close()
+
+        # Manual Products
+        conn = sqlite3.connect(MANUAL_PRODUCT_DB)
+        for p in data.get("manual_products", []):
+            conn.execute("""INSERT INTO manual_product (server, amount, sku_code, display_name)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(server, amount) DO UPDATE SET
+                sku_code=excluded.sku_code,
+                display_name=excluded.display_name
+            """, (p["server"], p["amount"], p.get("sku_code", ""), p.get("display_name", "")))
+        conn.commit()
+        conn.close()
+
+        # Subscriptions
+        conn = sqlite3.connect(SUBSCRIPTION_DB)
+        for s in data.get("subscriptions", []):
+            conn.execute("""INSERT INTO subscriptions (user_id, expiry_date, status)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                expiry_date=excluded.expiry_date,
+                status=excluded.status
+            """, (s["user_id"], s.get("expiry_date", ""), s.get("status", "active")))
+        conn.commit()
+        conn.close()
+
+        # User API
+        conn = sqlite3.connect(USER_API_DB)
+        for u in data.get("user_api", []):
+            conn.execute("""INSERT INTO user_api (user_id, api_key, secret_key)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                api_key=excluded.api_key,
+                secret_key=excluded.secret_key
+            """, (u["user_id"], u.get("api_key", ""), u.get("secret_key", "")))
+        conn.commit()
+        conn.close()
+
+        # Referrals
+        conn = sqlite3.connect(USER_BALANCE_DB)
+        for r in data.get("referrals", []):
+            conn.execute("""INSERT OR IGNORE INTO referrals (user_id, referred_user_id, rewarded)
+                VALUES (?, ?, ?)
+            """, (r["user_id"], r["referred_user_id"], r.get("rewarded", 0)))
+        conn.commit()
+        conn.close()
+
+        # Check-ins
+        conn = sqlite3.connect(USER_BALANCE_DB)
+        for c in data.get("checkins", []):
+            conn.execute("""INSERT OR IGNORE INTO checkins (user_id, checkin_date, reward)
+                VALUES (?, ?, ?)
+            """, (c["user_id"], c["checkin_date"], c.get("reward", 0)))
+        conn.commit()
+        conn.close()
+
+        # Orders
+        conn = sqlite3.connect(USER_BALANCE_DB)
+        for o in data.get("orders", []):
+            conn.execute("""INSERT INTO orders (user_id, game, product, player_id, zone_id, price, status, transaction_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (o["user_id"], o["game"], o["product"], o.get("player_id", ""),
+                  o.get("zone_id", ""), o.get("price", 0.0), o.get("status", "pending"),
+                  o.get("transaction_id", "")))
+        conn.commit()
+        conn.close()
+
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+# ============================================================
+# Chapter 10 — Melostore API Functions
+# ============================================================
 
 def api_headers(user_id=None):
     if user_id:
@@ -663,6 +936,66 @@ def get_smart_pricelists(brand_id=316, limit=500):
     params = {"brand": brand_id, "limit": limit}
     return api_get("/api/v1/h2h/smart-pricelists", params=params)
 
+
+def check_ml_nickname(player_id, zone_id):
+    payload = {
+        "game_code": "mobile-legends",
+        "customer_target": str(player_id),
+        "customer_target_zone": str(zone_id),
+    }
+    return api_post("/api/v1/h2h/check-nickname", payload)
+
+
+def check_ml_purchase_limit(player_id, zone_id):
+    payload = {
+        "customer_target": str(player_id),
+        "customer_target_zone": str(zone_id),
+    }
+    return api_post("/api/v1/h2h/mobile-legends/purchase-limit", payload)
+
+
+def create_transaction(product, player_id, zone_id, max_bid=None):
+    sku = product.get("sku_code", "")
+    buyer_trx_id = "EREN-" + uuid.uuid4().hex[:20].upper()
+    payload = {
+        "sku_code": sku,
+        "customer_target": str(player_id),
+        "customer_target_zone": str(zone_id) if zone_id else "",
+        "buyer_trx_id": buyer_trx_id,
+        "sandbox_mode": MELO_SANDBOX,
+    }
+    return api_post("/api/v1/h2h/transaction", payload)
+
+
+async def check_transaction_status(transaction_id):
+    data, error = api_get(f"/api/v1/h2h/transaction/{transaction_id}")
+    if error:
+        return None, error
+    result = data.get("data", {})
+    return result.get("status", "unknown"), None
+
+
+async def get_transaction_detail(transaction_id):
+    data, error = api_get(f"/api/v1/h2h/transaction/{transaction_id}")
+    if error:
+        return None, error
+    return data.get("data", {}), None
+
+# ============================================================
+# Chapter 11 — Product Loading (Cache + Filter)
+# ============================================================
+
+PRODUCT_CACHE = {
+    "Global": [], "Indonesia": [], "Malaysia": [], "Singapore": [],
+    "Turkey": [], "Philippines": [], "Brazil": [],
+    "PUBG": [], "TGS": [], "TGP": [],
+}
+LAST_PRODUCTS_LOAD = 0
+PRODUCT_CACHE_TTL = 300
+PRODUCT_LOAD_LOCK = __import__("threading").Lock()
+PRODUCT_LAST_ERROR = {}
+
+
 def format_amount_for_display(amount):
     try:
         if "." in str(amount):
@@ -704,114 +1037,8 @@ def get_unique_products(server):
     for amount, group in amount_groups.items():
         cheapest = min(group, key=lambda p: p.get("price", 999999999))
         unique_products.append(cheapest)
-
     return unique_products
 
-async def check_transaction_status(transaction_id):
-    data, error = api_get(f"/api/v1/h2h/transaction/{transaction_id}")
-    if error:
-        return None, error
-    result = data.get("data", {})
-    return result.get("status", "unknown"), None
-
-
-async def get_transaction_detail(transaction_id):
-    data, error = api_get(f"/api/v1/h2h/transaction/{transaction_id}")
-    if error:
-        return None, error
-    return data.get("data", {}), None
-
-
-async def auto_status_update(context, transaction_id, user_id, chat_id, message_id,
-                              order_info=None, product_amount="",
-                              user_info=None, max_wait=600,
-                              mc_price=0):
-    start_time = time.time()
-    check_interval = 15
-    refunded = False
-    price_charged = 0
-
-    while (time.time() - start_time) < max_wait:
-        await asyncio.sleep(check_interval)
-        status, error = await check_transaction_status(transaction_id)
-        if error:
-            continue
-
-        if status and status.lower() in ("success", "failed", "canceled", "refunded"):
-            emoji = "✅" if status.lower() == "success" else "❌"
-
-            if status.lower() in ("failed", "canceled", "refunded") and not refunded:
-                detail, err = await get_transaction_detail(transaction_id)
-                if not err and detail:
-                    try:
-                        price_charged = float(detail.get("price_charged", 0))
-                    except Exception:
-                        price_charged = 0
-
-                    # ✅ Refund the user's paid amount
-                    refund_amount = mc_price if mc_price else price_charged
-                    if refund_amount > 0:
-                        add_user_balance(user_id, refund_amount)
-                        refunded = True
-                        print(f"✅ Refunded {refund_amount} Coin to {user_id}")
-
-            if status.lower() == "success":
-                ref_value = "0"
-            else:
-                # ✅ Show the refunded amount
-                refund_amount = mc_price if mc_price else price_charged
-                if refund_amount > 0:
-                    ref_value = f"{refund_amount:.3f} Coin"
-                else:
-                    ref_value = str(product_amount) if product_amount else "0"
-
-            info_text = order_info if order_info else ""
-            new_balance = get_user_balance(user_id)
-
-            try:
-                text = (
-                    f"{emoji} <b>Order {status.upper()}</b>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"{info_text}"
-                    f"⏳ Status: <b>{status.upper()}</b>\n"
-                    f"🔖 Ref: <b>{html.escape(ref_value)}</b>\n"
-                    f"🆔 Trx: <code>{transaction_id}</code>\n"
-                    f"🪙 Balance: <b>{new_balance:.3f} Coin</b>"
-                )
-                if status.lower() in ("failed", "canceled", "refunded"):
-                    text += f"\n\n💰 <b>Refunded to your balance.</b>"
-
-                await context.bot.edit_message_text(
-                    chat_id=chat_id, message_id=message_id,
-                    text=text, parse_mode="HTML",
-                )
-            except Exception as e:
-                print("STATUS UPDATE ERROR:", e)
-
-            try:
-                alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
-                user_section = user_info if user_info else ""
-                alert_text = (
-                    f"{emoji} <b>Transaction {status.upper()}</b>\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"{user_section}"
-                    f"{info_text}"
-                    f"🆔 Trx: <code>{transaction_id}</code>\n"
-                    f"🔖 Ref: <b>{html.escape(ref_value)}</b>\n"
-                    f"🪙 Balance: <b>{new_balance:.3f} Coin</b>"
-                )
-                if status.lower() in ("failed", "canceled", "refunded"):
-                    alert_text += f"\n\n💰 <b>Refunded to user balance.</b>"
-
-                await context.bot.send_message(
-                    chat_id=alert_target, text=alert_text, parse_mode="HTML",
-                )
-            except Exception as e:
-                print("ALERT STATUS ERROR:", e)
-
-            break
-    else:
-        print(f"⏰ Status check timeout for {transaction_id}")
 
 def load_server_products(server):
     params = {"limit": 1000}
@@ -823,7 +1050,6 @@ def load_server_products(server):
 
     rows = data.get("data", []) if isinstance(data, dict) else []
     meta = data.get("meta", {}) if isinstance(data, dict) else {}
-
     brands = meta.get("brands", [])
     brand_map = {str(x.get("id")): x.get("name", "") for x in brands if isinstance(x, dict)}
 
@@ -834,7 +1060,6 @@ def load_server_products(server):
         brand_id = str(product.get("brand_id", ""))
         brand_name = brand_map.get(brand_id, "")
         name_text = f"{brand_name} {product.get('name', '')} {product.get('type_name', '')}".lower()
-
         sku = str(product.get("sku_code", ""))
         sku_lower = sku.lower()
 
@@ -849,24 +1074,20 @@ def load_server_products(server):
             if any(kw in name_text for kw in keywords):
                 game_type = game
                 break
-
         if not game_type:
             continue
 
         product_server = None
-
         if game_type == "MLBB":
             for prefix, srv_name in SMART_SKU_PREFIX.items():
                 if sku_lower.startswith(prefix):
                     product_server = srv_name
                     break
-
             if not product_server:
                 for prefix, srv_name in MLBB_SKU_PREFIX.items():
                     if sku_lower.startswith(prefix):
                         product_server = srv_name
                         break
-
             if not product_server:
                 if "indonesia" in name_text or "(id)" in name_text:
                     product_server = "Indonesia"
@@ -882,10 +1103,8 @@ def load_server_products(server):
                     product_server = "Brazil"
                 elif "global" in name_text:
                     product_server = "Global"
-
         elif game_type == "PUBG":
             product_server = "PUBG"
-
         elif game_type == "Telegram":
             if "premium" in name_text or "gift card" in name_text or "gazette" in name_text:
                 product_server = "TGP"
@@ -898,7 +1117,6 @@ def load_server_products(server):
             continue
 
         name = str(product.get("name", ""))
-
         if game_type == "PUBG":
             num_match = re.search(r"(\d+)", name)
             amount = num_match.group(1) if num_match else name.strip()
@@ -916,7 +1134,6 @@ def load_server_products(server):
             name_lower = clean_name.lower()
             pass_keywords = ["pass", "bundle", "elite", "twilight", "weekly", "monthly", "pack"]
             is_pass_or_bundle = any(kw in name_lower for kw in pass_keywords)
-
             if is_pass_or_bundle:
                 amount = re.sub(r"(?i)\bdiamonds?\b", "", clean_name).replace(" ", "").strip()
                 if not amount:
@@ -962,7 +1179,6 @@ def refresh_products(server=None, force=False):
     global PRODUCT_CACHE, LAST_PRODUCTS_LOAD
     servers = [server] if server else list(PRODUCT_CACHE.keys())
     now = time.time()
-
     with PRODUCT_LOAD_LOCK:
         for name in servers:
             if not force and PRODUCT_CACHE.get(name) and (now - LAST_PRODUCTS_LOAD) < PRODUCT_CACHE_TTL:
@@ -983,38 +1199,48 @@ def ensure_server_products(server):
     products = PRODUCT_CACHE.get(server, [])
     return products, PRODUCT_LAST_ERROR.get(server) if not products else None
 
-def main_keyboard():
-    return ReplyKeyboardMarkup(
-        [
-            ["💎 MLBB Diamonds", "🔍 Check ML ID"],
-            ["🎮 PUBG UC", "⭐ Telegram Stars"],
-            ["👑 Telegram Premium", "💰 My Balance"],
-            ["🌍 Global", "🇮🇩 Indonesia"],
-            ["🇲🇾 Malaysia", "🇸🇬 Singapore"],
-            ["🇹🇷 Turkey", "🇵🇭 Philippines"],
-            ["🇧🇷 Brazil", "💳 Deposit"],
-            ["📞 Contact Admin", "⚙️ Admin Panel"],
-            ["🔌 API Status"],
-        ],
-        resize_keyboard=True,
-    )
+# ============================================================
+# Chapter 12 — Inline Keyboard Menus
+# ============================================================
+
+def main_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💎 MLBB Diamond", callback_data="menu:mlbb")],
+        [InlineKeyboardButton("💰 Wallet", callback_data="menu:wallet"),
+         InlineKeyboardButton("💳 Recharge", callback_data="menu:recharge")],
+        [InlineKeyboardButton("📊 Dashboard", callback_data="menu:dashboard")],
+        [InlineKeyboardButton("📅 Daily Check-in", callback_data="menu:checkin")],
+        [InlineKeyboardButton("⭐ Favorites", callback_data="menu:favorites")],
+        [InlineKeyboardButton("📋 Order History", callback_data="menu:orders"),
+         InlineKeyboardButton("👥 Referral", callback_data="menu:referral")],
+        [InlineKeyboardButton("🏆 Rewards", callback_data="menu:rewards")],
+        [InlineKeyboardButton("💡 Feedback", callback_data="menu:feedback"),
+         InlineKeyboardButton("🏅 Top Inviters", callback_data="menu:topinviters")],
+        [InlineKeyboardButton("📞 Admin Contact", callback_data="menu:admin"),
+         InlineKeyboardButton("📌 Daily Mission", callback_data="menu:mission")],
+    ])
+
+
+def back_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")]
+    ])
 
 
 def server_keyboard():
-    return InlineKeyboardMarkup(
-        [
-            [InlineKeyboardButton("🌍 Global Server", callback_data="server:Global")],
-            [InlineKeyboardButton("🇮🇩 Indonesia Server", callback_data="server:Indonesia")],
-            [InlineKeyboardButton("🇲🇾 Malaysia Server", callback_data="server:Malaysia")],
-            [InlineKeyboardButton("🇸🇬 Singapore Server", callback_data="server:Singapore")],
-            [InlineKeyboardButton("🇹🇷 Turkey Server", callback_data="server:Turkey")],
-            [InlineKeyboardButton("🇵🇭 Philippines Server", callback_data="server:Philippines")],
-            [InlineKeyboardButton("🇧🇷 Brazil Server", callback_data="server:Brazil")],
-            [InlineKeyboardButton("🎮 PUBG", callback_data="server:PUBG")],
-            [InlineKeyboardButton("⭐ Telegram Stars", callback_data="server:TGS")],
-            [InlineKeyboardButton("👑 Telegram Premium", callback_data="server:TGP")],
-        ]
-    )
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🌍 Global Server", callback_data="server:Global")],
+        [InlineKeyboardButton("🇮🇩 Indonesia Server", callback_data="server:Indonesia")],
+        [InlineKeyboardButton("🇲🇾 Malaysia Server", callback_data="server:Malaysia")],
+        [InlineKeyboardButton("🇸🇬 Singapore Server", callback_data="server:Singapore")],
+        [InlineKeyboardButton("🇹🇷 Turkey Server", callback_data="server:Turkey")],
+        [InlineKeyboardButton("🇵🇭 Philippines Server", callback_data="server:Philippines")],
+        [InlineKeyboardButton("🇧🇷 Brazil Server", callback_data="server:Brazil")],
+        [InlineKeyboardButton("🎮 PUBG", callback_data="server:PUBG")],
+        [InlineKeyboardButton("⭐ Telegram Stars", callback_data="server:TGS")],
+        [InlineKeyboardButton("👑 Telegram Premium", callback_data="server:TGP")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
 
 
 def amount_keyboard(server, is_admin=False, page=0, per_page=11):
@@ -1025,7 +1251,6 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=11):
     page_items = unique_products[start:end]
 
     buttons = []
-
     for index, product in enumerate(page_items):
         amount = product.get("amount", "?")
         display_amount = product.get("display_name", amount)
@@ -1044,8 +1269,7 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=11):
             label = f"💎 {format_amount_for_display(display_amount)} • {price_text}"
 
         real_index = start + index
-        button = InlineKeyboardButton(label, callback_data=f"amount:{server}:{real_index}")
-        buttons.append([button])
+        buttons.append([InlineKeyboardButton(label, callback_data=f"amount:{server}:{real_index}")])
 
     nav_row = []
     if page > 0:
@@ -1056,7 +1280,12 @@ def amount_keyboard(server, is_admin=False, page=0, per_page=11):
         buttons.append(nav_row)
 
     buttons.append([InlineKeyboardButton("⬅️ Back to Servers", callback_data="back:servers")])
+    buttons.append([InlineKeyboardButton("🏠 Home", callback_data="menu:main")])
     return InlineKeyboardMarkup(buttons)
+
+# ============================================================
+# Chapter 13 — Start Handler
+# ============================================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
@@ -1073,334 +1302,319 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💎 <b>Eren's Diamond Bot</b>\n\n"
             f"👑 <b>Status:</b> Admin\n"
             f"🪙 <b>Balance:</b> {balance:.3f} Coin\n\n"
-            "🛒 <b>Services</b>\n"
-            "💎 MLBB Diamonds\n🔍 Check ML ID\n"
-            "🎮 PUBG UC\n⭐ Telegram Stars\n"
-            "👑 Telegram Premium\n"
-            "💰 My Balance\n💳 Deposit"
+            "👇 Choose from the menu below"
         )
-        await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_menu())
         return
 
     status = get_access_status(user_id)
 
     if status == "approved":
         status_text = "✅ <b>Active</b>"
-        footer = "🛒 <b>Services</b>\n💎 MLBB Diamonds\n🔍 Check ML ID\n🎮 PUBG UC\n⭐ Telegram Stars\n👑 Telegram Premium\n💰 My Balance\n💳 Deposit"
-        show_keyboard = True
+        show_menu = True
     elif status == "pending":
         status_text = "⏳ <b>Pending</b>"
-        footer = "Please wait. You can use the Bot after Admin approval."
-        show_keyboard = False
+        show_menu = False
     elif status == "rejected":
         status_text = "❌ <b>Rejected</b>"
-        footer = "Press /start to send a new request."
-        show_keyboard = False
+        show_menu = False
     else:
         await request_access(update, context, force_request=True)
         status_text = "⏳ <b>Pending Approval</b>"
-        footer = "You can use the Bot after approval."
-        show_keyboard = False
+        show_menu = False
 
     text = (
         f"✨ <b>Welcome, {html.escape(first_name)}!</b> ✨\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "💎 <b>Eren's Diamond Bot</b>\n\n"
         f"👤 <b>Status:</b> {status_text}\n"
-        f"🪙 <b>Balance:</b> {balance:.3f} Coin\n\n"
+        f"🪙 <b>Balance:</b> {balance:.3f} Coin\n"
+        f"👥 <b>Referrals:</b> 0\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{footer}\n\n⚡ Powered by Eren"
+        "⚡ Powered by Eren"
     )
 
-    if show_keyboard:
-        await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
+    if show_menu:
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_menu())
     else:
         await update.message.reply_text(text, parse_mode="HTML")
 
+# ============================================================
+# Chapter 14 — Wallet & Dashboard Handler
+# ============================================================
 
-async def show_my_balance(update: Update):
-    user_id = update.effective_user.id
-    user_balance = get_user_balance(user_id)
+async def show_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    balance = get_user_balance(user_id)
+    referral_count = get_referral_count(user_id)
 
-    if user_id == ADMIN_ID:
-        data, error = get_balance()
-        if not error:
-            info = data.get("data", {})
-            mc_balance = info.get("h2h_balance", 0)
-            usd = info.get("h2h_balance_usd", 0)
-            user_ks = mc_to_ks(user_balance)
-            mc_ks = mc_to_ks(mc_balance)
-            text = (
-                "💰 <b>Balance</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"🪙 <b>User Balance</b>\n<b>{user_balance:.3f} Coin</b>\n💵 ≈ <b>{user_ks:,.0f} Ks</b>\n\n"
-                f"🪙 <b>Melostore Balance</b>\n<b>{mc_balance:,.2f} Coin</b>\n💵 ≈ <b>{mc_ks:,.0f} Ks</b>\n\n"
-                f"💵 USD: <b>${usd:,.2f}</b>"
-            )
-        else:
-            user_ks = mc_to_ks(user_balance)
-            text = (
-                "💰 <b>Balance</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"🪙 <b>User Balance</b>\n<b>{user_balance:.3f} Coin</b>\n💵 ≈ <b>{user_ks:,.0f} Ks</b>\n\n"
-                f"🪙 <b>Melostore</b>: <i>Error</i>"
-            )
+    text = (
+        "💰 <b>Wallet</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 User ID: <code>{user_id}</code>\n"
+        f"💎 Balance: <b>{balance:.3f} Coins</b>\n"
+        f"👥 Referral count: <b>{referral_count}</b>\n\n"
+        "💡 Use <b>Recharge</b> to add Coins."
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Recharge", callback_data="menu:recharge")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+async def show_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    balance = get_user_balance(user_id)
+    referral_count = get_referral_count(user_id)
+
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    orders = conn.execute(
+        "SELECT game, product, status, created_at FROM orders WHERE user_id=? ORDER BY created_at DESC LIMIT 3",
+        (user_id,)
+    ).fetchall()
+    conn.close()
+
+    orders_text = ""
+    if orders:
+        for game, product, status, created_at in orders:
+            emoji = {"success": "✅", "pending": "⏳", "failed": "❌"}.get(status, "❓")
+            orders_text += f"  {emoji} {game} — {product}\n"
     else:
+        orders_text = "  • None yet"
+
+    text = (
+        "📊 <b>Dashboard</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 ID: <code>{user_id}</code>\n"
+        f"💎 Balance: <b>{balance:.3f}</b>\n"
+        f"👥 Referrals: <b>{referral_count}</b>\n\n"
+        "📦 <b>Recent Orders</b>\n"
+        f"{orders_text}\n\n"
+        "💳 <b>Recent Recharges</b>\n"
+        "  • None yet"
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Refresh", callback_data="menu:dashboard")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+# ============================================================
+# Chapter 15 — Recharge (Deposit) Handler
+# ============================================================
+
+async def show_recharge(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    text = (
+        "💳 <b>WALLET RECHARGE</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "💰 Minimum recharge amount — <b>5,000 MMK</b>\n\n"
+        "💳 Choose your preferred payment method\n"
+        "from the options below.\n\n"
+        "👇 <b>Select Payment Method</b> 👇"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 K-Pay", callback_data="recharge:kpay")],
+        [InlineKeyboardButton("📱 Wave Pay", callback_data="recharge:wave")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+async def show_kpay(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    text = (
+        "💳 <b>KPAY | WALLET RECHARGE</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👤 Account Name: <b>Mg Myo Min</b>\n"
+        "📱 Payment Number:\n"
+        "<code>09446787195</code>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "💰 Enter the recharge amount in MMK.\n\n"
+        "📌 Minimum Recharge — <b>5,000 MMK</b>\n\n"
+        "💡 Example —\n"
+        "  5000\n"
+        "  10000\n"
+        "  20000\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "⚠️ Please verify the account number\n"
+        "before making payment."
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Back", callback_data="menu:recharge")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+async def show_wave(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    text = (
+        "💳 <b>WAVE PAY | WALLET RECHARGE</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👤 Account Name: <b>Mg Myo Min</b>\n"
+        "📱 Payment Number:\n"
+        "<code>09446787195</code>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "💰 Enter the recharge amount in MMK.\n\n"
+        "📌 Minimum Recharge — <b>5,000 MMK</b>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "⚠️ Please verify the account number\n"
+        "before making payment."
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Back", callback_data="menu:recharge")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+# ============================================================
+# Chapter 16 — Referral System
+# ============================================================
+
+def get_referral_count(user_id):
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    row = conn.execute("SELECT COUNT(*) FROM referrals WHERE user_id=?", (int(user_id),)).fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+
+def register_referral(referrer_id, new_user_id):
+    if referrer_id == new_user_id:
+        return False
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    existing = conn.execute("SELECT id FROM referrals WHERE referred_user_id=?", (int(new_user_id),)).fetchone()
+    if existing:
+        conn.close()
+        return False
+    conn.execute("""INSERT INTO referrals (user_id, referred_user_id, rewarded)
+        VALUES (?, ?, 0)
+    """, (int(referrer_id), int(new_user_id)))
+    conn.commit()
+    conn.close()
+    return True
+
+
+async def show_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    bot_username = (await context.bot.get_me()).username
+    ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+    total = get_referral_count(user_id)
+
+    text = (
+        "👥 <b>Referral</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🔗 {ref_link}\n\n"
+        f"Total: <b>{total}</b>\n\n"
+        "💡 Invite friends to earn +10 Coins."
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 Share", url=f"https://t.me/share/url?url={ref_link}")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+# ============================================================
+# Chapter 17 — Daily Check-in
+# ============================================================
+
+def can_checkin_today(user_id):
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    row = conn.execute("SELECT id FROM checkins WHERE user_id=? AND checkin_date=?",
+                       (int(user_id), today)).fetchone()
+    conn.close()
+    return row is None
+
+
+def save_checkin(user_id, reward):
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    conn.execute("""INSERT OR IGNORE INTO checkins (user_id, checkin_date, reward)
+        VALUES (?, ?, ?)
+    """, (int(user_id), today, int(reward)))
+    conn.commit()
+    conn.close()
+
+
+async def show_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    if not can_checkin_today(user_id):
+        balance = get_user_balance(user_id)
         text = (
-            "💰 <b>Your Balance</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🪙 Balance: <b>{user_balance:.3f} Coin</b>\n\n"
-            "💳 Press <b>Deposit</b> to add funds."
+            "⚠️ You have already checked in today.\n"
+            f"💎 <b>{balance:.3f} Coins</b>"
+        )
+    else:
+        import random
+        reward = random.randint(2, 9)
+        add_user_balance(user_id, reward)
+        save_checkin(user_id, reward)
+        balance = get_user_balance(user_id)
+        text = (
+            "✅ <b>Check-in Successful!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🎁 Reward: <b>+{reward} Coins</b>\n"
+            f"💎 Balance: <b>{balance:.3f} Coins</b>\n\n"
+            "📅 Come back tomorrow."
         )
 
-    await update.message.reply_text(text, parse_mode="HTML")
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+# ============================================================
+# Chapter 18 — Daily Mission
+# ============================================================
+
+def get_mission_progress(user_id):
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    row = conn.execute("""SELECT progress, target, claimed FROM missions
+        WHERE user_id=? AND mission_date=?
+    """, (int(user_id), today)).fetchone()
+    conn.close()
+    if row:
+        return {"progress": row[0], "target": row[1], "claimed": row[2]}
+    return {"progress": 0, "target": 5, "claimed": 0}
 
 
-async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Admin only")
-        return
-
-    data, error = get_balance()
-    if error:
-        await update.message.reply_text(f"❌ Error: {html.escape(str(error))}")
-        return
-
-    info = data.get("data", {})
-    balance = info.get("h2h_balance", 0)
-    usd = info.get("h2h_balance_usd", 0)
+async def show_mission(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    mission = get_mission_progress(user_id)
+    progress = mission["progress"]
+    target = mission["target"]
+    claimed = mission["claimed"]
+    status = "✅ Claimed" if claimed else ("🎉 Ready" if progress >= target else "⏳ Pending")
 
     text = (
-        "📊 <b>Admin Panel</b>\n"
+        "📌 <b>Daily Invite Mission</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🪙 Melostore Coin: <b>{balance:,.2f} Coin</b>\n"
-        f"💵 USD: <b>${usd:,.2f}</b>\n\n"
-        f"🔔 Alert Group: <code>{ALERT_CHAT_ID}</code>\n"
-        f"🧪 Sandbox: <b>{MELO_SANDBOX}</b>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "👥 <b>User Management</b>\n"
-        "/block USER_ID\n"
-        "/unblock USER_ID\n"
-        "/listusers\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "💡 <b>Balance Commands</b>\n"
-        "/addbalance USER_ID Coin\n"
-        "/checkbalance USER_ID\n\n"
-        "💰 <b>Price Commands</b>\n"
-        "/setprice SERVER AMOUNT Coin\n"
-        "/delprice SERVER AMOUNT\n"
-        "/listprices [SERVER]\n\n"
-        "📦 <b>Product Commands</b>\n"
-        "/addproduct SERVER AMOUNT [SKU]\n"
-        "/delproduct SERVER AMOUNT\n"
-        "/listproducts [SERVER]\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "🌍 <b>Server Names</b>\n"
-        "💎 MLBB: <code>Global</code>, <code>Indonesia</code>, "
-        "<code>Malaysia</code>, <code>Singapore</code>, "
-        "<code>Turkey</code>, <code>Philippines</code>, "
-        "<code>Brazil</code>\n\n"
-        "🎮 PUBG: <code>PUBG</code>\n"
-        "⭐ Telegram Stars: <code>TGS</code>\n"
-        "👑 Telegram Premium: <code>TGP</code>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "📌 <b>Examples:</b>\n"
-        "<code>/setprice Global 14 4.227</code>\n"
-        "<code>/setprice TGS 50 15.699</code>\n"
-        "<code>/setprice TGP 3M 226.061</code>\n\n"
-        "<code>/addproduct Global 14 MLGL14DD-S12</code>\n"
-        "<code>/addproduct TGS 50 TS50TS-S1</code>\n"
-        "<code>/addproduct TGP 3M TPGC3M0-S7</code>\n\n"
-        "💾 <b>Backup</b>\n"
-        "/backup\n/restore"
+        "Invite 5 friends today!\n"
+        f"Progress: <b>{progress}/{target}</b>\n"
+        f"Status: {status}\n\n"
+        "🎁 Reward: <b>500 Coins</b>\n\n"
+        "Use /claimmission to claim when completed."
     )
-    await update.message.reply_text(text, parse_mode="HTML")
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Refresh", callback_data="menu:mission")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=keyboard)
 
-
-async def show_deposit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "💳 <b>Deposit</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "💙 <b>K Pay</b>: <code>09766605879 (TNS)</code>\n"
-        "💛 <b>AYA Pay</b>: <code>09678664100 (HHS)</code>\n"
-        "💚 <b>UAB Pay</b>: <code>09425160424 (TNS)</code>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "⚠️ <b>Minimum deposit is 100 Coin.</b>\n\n"
-        "📸 Send the screenshot to this chat."
-    )
-    await update.message.reply_text(text, parse_mode="HTML")
-
-
-async def show_api_status(update: Update):
-    data, error = get_profile()
-    if error:
-        await update.message.reply_text(f"🔴 <b>API Offline</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
-        return
-    info = data.get("data", {})
-    sandbox = info.get("is_sandbox_mode", False)
-    status = "🧪 Sandbox" if sandbox else "🟢 Production"
-    text = (
-        "🔌 <b>API Status</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🟢 Connection: <b>Connected</b>\n"
-        f"⚙️ Mode: <b>{status}</b>\n\n⚡ Powered by Eren"
-    )
-    await update.message.reply_text(text, parse_mode="HTML")
-
-async def start_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    context.user_data["state"] = "check_id_player"
-    await update.message.reply_text(
-        "🔍 <b>MLBB ID Checker</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🆔 Enter <b>Player ID</b>.\n\n❌ Cancel: /start",
-        parse_mode="HTML",
-    )
-
-
-def check_ml_nickname(player_id, zone_id):
-    payload = {
-        "game_code": "mobile-legends",
-        "customer_target": str(player_id),
-        "customer_target_zone": str(zone_id),
-    }
-    return api_post("/api/v1/h2h/check-nickname", payload)
-
-
-def check_ml_purchase_limit(player_id, zone_id):
-    payload = {
-        "customer_target": str(player_id),
-        "customer_target_zone": str(zone_id),
-    }
-    return api_post("/api/v1/h2h/mobile-legends/purchase-limit", payload)
-
-
-async def process_check_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    player_id = context.user_data.get("check_player_id")
-    zone_id = update.message.text.strip()
-    if not zone_id.isdigit():
-        await update.message.reply_text("❌ Zone ID must be numeric.")
-        return
-
-    await update.message.reply_text("🔍 <b>Checking...</b>", parse_mode="HTML")
-
-    data, error = check_ml_nickname(player_id, zone_id)
-    if error:
-        await update.message.reply_text(f"❌ <b>Failed</b>\n\n{html.escape(str(error))}", parse_mode="HTML")
-        context.user_data.clear()
-        return
-
-    info = data.get("data", {})
-    nickname = info.get("username") or info.get("nickname") or info.get("name") or "-"
-    region = info.get("region") or info.get("region_name") or "-"
-
-    dd_lines = ["💎 <b>Double Diamond</b>"]
-    wp_lines = ["📅 <b>Weekly Pass</b>"]
-
-    pl_data, pl_error = check_ml_purchase_limit(player_id, zone_id)
-    if not pl_error and pl_data:
-        pl_info = pl_data.get("data", {})
-
-        dd_items = pl_info.get("double_diamonds", {}).get("items", [])
-        for item in dd_items:
-            pkg = item.get("package_code", "?")
-            limit = item.get("limit_reached", True)
-            match = re.search(r"(\d+)", pkg)
-            pkg_display = f"{match.group(1)}+{match.group(1)}" if match else pkg
-
-            if not limit:
-                dd_lines.append(f"  ✅ <b>{pkg_display}</b> • Available")
-            else:
-                dd_lines.append(f"  ❌ <b>{pkg_display}</b> • Not available")
-
-        wp_items = pl_info.get("weekly_pass", {}).get("items", [])
-        for item in wp_items:
-            pkg = item.get("package_code", "?")
-            limit = item.get("limit_reached", True)
-            if not limit:
-                wp_lines.append(f"  ✅ <b>{pkg}</b> • Available")
-            else:
-                wp_lines.append(f"  ❌ <b>{pkg}</b> • Not available")
-
-    dd_text = "\n".join(dd_lines) if len(dd_lines) > 1 else "💎 Double Diamond: ❌ Not available"
-    wp_text = "\n".join(wp_lines) if len(wp_lines) > 1 else "📅 Weekly Pass: ❌ Not available"
-
-    text = (
-        "🔍 <b>MLBB ID Result</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👤 Nickname: <b>{html.escape(str(nickname))}</b>\n"
-        f"🆔 Player ID: <code>{html.escape(str(player_id))}</code>\n"
-        f"🌐 Zone ID: <code>{html.escape(str(zone_id))}</code>\n"
-        f"🌍 Region: <b>{html.escape(str(region))}</b>\n\n"
-        f"{dd_text}\n\n"
-        f"{wp_text}\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "✅ <b>ID Verified</b>"
-    )
-    context.user_data.clear()
-    await update.message.reply_text(text, parse_mode="HTML")
-
-async def server_product_shortcut(update: Update, context: ContextTypes.DEFAULT_TYPE, server: str):
-    products, error = ensure_server_products(server)
-    if not products:
-        await update.message.reply_text(f"❌ <b>{server}</b>\n\nCould not load product list.", parse_mode="HTML")
-        return
-
-    unique_products = get_unique_products(server)
-    if not unique_products:
-        await update.message.reply_text(f"📭 <b>{server}</b>\n\nNo products available.", parse_mode="HTML")
-        return
-
-    flag = SERVER_FLAGS.get(server, "🌍")
-
-    lines = ["📦 <b>Products</b>", "━━━━━━━━━━━━━━━━━━━━", "", f"{flag} <b>{server}</b>", ""]
-
-    for p in unique_products:
-        amount = p.get("amount", "?")
-        display_amount = p.get("display_name", amount)
-        mc_price = get_mc_price(server, amount, p)
-        price_text = f"{mc_price:.3f} Coin" if mc_price else "No Price"
-
-        game_type = p.get("game_type", "MLBB")
-        if game_type == "PUBG":
-            lines.append(f"  🎮 <b>{html.escape(str(display_amount))}</b> • {price_text}")
-        elif game_type == "Telegram":
-            if server == "TGP":
-                lines.append(f"  👑 <b>{html.escape(str(display_amount))}</b> • {price_text}")
-            else:
-                lines.append(f"  ⭐ <b>{html.escape(str(display_amount))}</b> • {price_text}")
-        else:
-            lines.append(f"  💎 <b>{html.escape(str(display_amount))}</b> • {price_text}")
-
-    lines.append("")
-    lines.append("━━━━━━━━━━━━━━━━━━━━")
-
-    if server == "PUBG":
-        lines.append("")
-        lines.append("💡 <b>Order:</b> <code>.pg PLAYER_ID AMOUNT</code>")
-        lines.append("")
-        lines.append(f"📌 <b>Example:</b> <code>.pg 5123456789 {unique_products[0].get('amount', '60')}</code>")
-    elif server == "TGS":
-        lines.append("")
-        lines.append("💡 <b>Order (Direct):</b> <code>.tg TARGET AMOUNT</code>")
-        lines.append("")
-        lines.append(f"📌 <b>Example:</b> <code>.tg @username {unique_products[0].get('amount', '50')}</code>")
-    elif server == "TGP":
-        lines.append("")
-        lines.append("💡 <b>Order (Gift Card):</b> <code>.tg TARGET AMOUNT</code>")
-        lines.append("")
-        lines.append(f"📌 <b>Example:</b> <code>.tg email@gmail.com {unique_products[0].get('amount', '3M')}</code>")
-        lines.append("")
-        lines.append("⚠️ <i>Gift Card - Email required.</i>")
-    else:
-        lines.append("")
-        lines.append("💡 <b>Order:</b> <code>.ml PLAYER_ID ZONE_ID [SERVER] AMOUNT</code>")
-        lines.append("")
-        lines.append("📌 <b>Server Codes:</b> gl, id, my, sg, ttr, php, brl")
-        lines.append("")
-        lines.append(f"📌 <b>Example:</b> <code>.ml 12345678 2039 gl {unique_products[0].get('amount', '5')}</code>")
-
-    text = "\n".join(lines)
-
-    if len(text) > 4000:
-        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
-            await update.message.reply_text(chunk, parse_mode="HTML")
-    else:
-        await update.message.reply_text(text, parse_mode="HTML")
+# ============================================================
+# Chapter 19 — MLBB Order Handler
+# ============================================================
 
 async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -1522,6 +1736,9 @@ async def ml_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await checking_msg.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
 
+# ============================================================
+# Chapter 20 — PUBG Order Handler
+# ============================================================
 
 async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -1598,6 +1815,9 @@ async def pg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
+# ============================================================
+# Chapter 21 — Telegram Order Handler
+# ============================================================
 
 async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
@@ -1667,7 +1887,6 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ <b>Price not set.</b>", parse_mode="HTML")
         return
 
-    # ✅ Validate target for TGP (Email) and TGS (Username)
     if server == "TGP":
         if "@" not in target:
             await update.message.reply_text(
@@ -1730,600 +1949,9 @@ async def tg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=keyboard)
 
-
-def create_transaction(product, player_id, zone_id, max_bid=None):
-    sku = product.get("sku_code", "")
-    buyer_trx_id = "EREN-" + uuid.uuid4().hex[:20].upper()
-    payload = {
-        "sku_code": sku,
-        "customer_target": str(player_id),
-        "customer_target_zone": str(zone_id) if zone_id else "",
-        "buyer_trx_id": buyer_trx_id,
-        "sandbox_mode": MELO_SANDBOX,
-    }
-    return api_post("/api/v1/h2h/transaction", payload)
-
-async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.photo:
-        return
-
-    user = update.effective_user
-    file_id = update.message.photo[-1].file_id
-
-    try:
-        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
-        await context.bot.send_photo(
-            chat_id=alert_target, photo=file_id,
-            caption=(
-                "💳 <b>NEW DEPOSIT</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"👤 Name: <b>{html.escape(user.first_name or '—')}</b>\n"
-                f"🔗 Username: @{user.username or '—'}\n"
-                f"🆔 User ID: <code>{user.id}</code>"
-            ),
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ Approve", callback_data=f"deposit:approve:{user.id}"),
-                InlineKeyboardButton("❌ Reject", callback_data=f"deposit:reject:{user.id}"),
-            ]]),
-        )
-        await update.message.reply_text("✅ <b>Screenshot received.</b>\n\nAdmin will review and add balance.")
-    except Exception as e:
-        print("DEPOSIT SEND ERROR:", e)
-
-
-async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.document:
-        return
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    document = update.message.document
-    file_name = document.file_name or ""
-
-    # ✅ ZIP — Backup Restore
-    if file_name.endswith('.zip'):
-        await update.message.reply_text("⏳ <b>Restoring...</b>", parse_mode="HTML")
-        try:
-            file = await context.bot.get_file(document.file_id)
-            zip_bytes = await file.download_as_bytearray()
-            if restore_backup_zip(bytes(zip_bytes)):
-                await update.message.reply_text("✅ <b>Restore successful.</b>\n\nPlease redeploy the Bot.")
-            else:
-                await update.message.reply_text("❌ Restore failed.")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Error: {html.escape(str(e))}")
-        return
-
-    await update.message.reply_text("❌ Please send a ZIP file only.")
-
-
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
-        return
-    if not await request_access(update, context):
-        return
-
-    text = update.message.text.strip()
-
-    if text.lower().startswith(".ml "):
-        parts = text.split()
-        if len(parts) < 4:
-            await update.message.reply_text(
-                "❌ <code>.ml PLAYER_ID ZONE_ID [SERVER] AMOUNT</code>\n\n"
-                "📌 <b>Example:</b> <code>.ml 12345678 2039 gl 5</code>",
-                parse_mode="HTML",
-            )
-            return
-        context.args = parts[1:]
-        await ml_command(update, context)
-        return
-
-    if text.lower().startswith(".pg "):
-        parts = text.split()
-        if len(parts) < 3:
-            await update.message.reply_text(
-                "❌ <code>.pg PLAYER_ID AMOUNT</code>\n\n"
-                "📌 <b>Example:</b> <code>.pg 5123456789 60</code>",
-                parse_mode="HTML",
-            )
-            return
-        context.args = parts[1:]
-        await pg_command(update, context)
-        return
-
-    if text.lower().startswith(".tg "):
-        parts = text.split()
-        if len(parts) < 3:
-            await update.message.reply_text(
-                "❌ <code>.tg TARGET AMOUNT</code>\n\n"
-                "📌 <b>Example:</b> <code>.tg @username 50</code>",
-                parse_mode="HTML",
-            )
-            return
-        context.args = parts[1:]
-        await tg_command(update, context)
-        return
-
-    if text == "💎 MLBB Diamonds":
-        await server_product_shortcut(update, context, "Global")
-        return
-    if text == "🔍 Check ML ID":
-        await start_check_id(update, context)
-        return
-    if text == "🎮 PUBG UC":
-        await server_product_shortcut(update, context, "PUBG")
-        return
-    if text == "⭐ Telegram Stars":
-        await server_product_shortcut(update, context, "TGS")
-        return
-    if text == "👑 Telegram Premium":
-        await server_product_shortcut(update, context, "TGP")
-        return
-
-    if text == "🌍 Global":
-        await server_product_shortcut(update, context, "Global")
-        return
-    if text == "🇮🇩 Indonesia":
-        await server_product_shortcut(update, context, "Indonesia")
-        return
-    if text == "🇲🇾 Malaysia":
-        await server_product_shortcut(update, context, "Malaysia")
-        return
-    if text == "🇸🇬 Singapore":
-        await server_product_shortcut(update, context, "Singapore")
-        return
-    if text == "🇹🇷 Turkey":
-        await server_product_shortcut(update, context, "Turkey")
-        return
-    if text == "🇵🇭 Philippines":
-        await server_product_shortcut(update, context, "Philippines")
-        return
-    if text == "🇧🇷 Brazil":
-        await server_product_shortcut(update, context, "Brazil")
-        return
-
-    if text == "💰 My Balance":
-        await show_my_balance(update)
-        return
-    if text == "💳 Deposit":
-        await show_deposit_menu(update, context)
-        return
-    if text == "📞 Contact Admin":
-        context.user_data["state"] = "contact_admin"
-        await update.message.reply_text(
-            "📞 <b>Contact Admin</b>\n\nType your message to the Admin.\n\n❌ Cancel: /start",
-            parse_mode="HTML",
-        )
-        return
-    if text == "⚙️ Admin Panel":
-        await show_admin_panel(update, context)
-        return
-    if text == "🔌 API Status":
-        if update.effective_user.id == ADMIN_ID:
-            await show_api_status(update)
-        else:
-            await update.message.reply_text("❌ Admin only")
-        return
-
-    state = context.user_data.get("state")
-
-    if state == "check_id_player":
-        if not text.isdigit():
-            await update.message.reply_text("❌ Player ID must be numeric.")
-            return
-        context.user_data["check_player_id"] = text
-        context.user_data["state"] = "check_id_zone"
-        await update.message.reply_text("🌐 Enter <b>Zone ID</b>.", parse_mode="HTML")
-        return
-
-    if state == "check_id_zone":
-        await process_check_id(update, context)
-        return
-
-    if state == "contact_admin":
-        user_id = update.effective_user.id
-        user_name = update.effective_user.first_name or "User"
-        username = f"@{update.effective_user.username}" if update.effective_user.username else "—"
-        try:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=(
-                    "📞 <b>NEW USER MESSAGE</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"👤 Name: <b>{html.escape(user_name)}</b>\n"
-                    f"🔗 Username: <b>{html.escape(username)}</b>\n"
-                    f"🆔 User ID: <code>{user_id}</code>\n\n"
-                    f"💬 {html.escape(text)}"
-                ),
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("↩️ Reply", callback_data=f"reply:{user_id}"),
-                ]]),
-            )
-            await update.message.reply_text("✅ <b>Message sent.</b>", parse_mode="HTML", reply_markup=main_keyboard())
-        except Exception as e:
-            print("CONTACT SEND ERROR:", e)
-        context.user_data.clear()
-        return
-
-    if state == "admin_reply":
-        if update.effective_user.id != ADMIN_ID:
-            return
-        reply_to = context.user_data.get("reply_to")
-        if not reply_to:
-            return
-        try:
-            await context.bot.send_message(
-                chat_id=reply_to,
-                text=f"📩 <b>Admin Reply</b>\n\n{html.escape(text)}",
-                parse_mode="HTML",
-                reply_markup=main_keyboard(),
-            )
-            await update.message.reply_text("✅ <b>Reply sent.</b>", reply_markup=main_keyboard())
-        except Exception as e:
-            print("REPLY SEND ERROR:", e)
-        context.user_data.clear()
-        return
-
-    await update.message.reply_text("❓ Please choose from the menu.", reply_markup=main_keyboard())
-
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await request_access(update, context):
-        return
-    text = (
-        "📖 <b>Help</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "💎 MLBB Diamonds\n🔍 Check ML ID\n"
-        "🎮 PUBG UC\n"
-        "⭐ Telegram Stars\n"
-        "👑 Telegram Premium\n"
-        "💰 My Balance\n💳 Deposit\n\n"
-        "🔹 <b>Order:</b>\n"
-        "<code>.ml ID ZONE [SERVER] AMOUNT</code>\n"
-        "<code>.pg USER_ID AMOUNT</code>\n"
-        "<code>.tg TARGET AMOUNT</code>"
-    )
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=main_keyboard())
-
-async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    await update.message.reply_text("⏳ <b>Backing up...</b>", parse_mode="HTML")
-    zip_buffer = create_backup_zip()
-    if not zip_buffer:
-        await update.message.reply_text("❌ Backup failed.")
-        return
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    await update.message.reply_document(
-        document=zip_buffer,
-        filename=f"eren_backup_{timestamp}.zip",
-        caption="✅ <b>Backup completed.</b>",
-        parse_mode="HTML",
-    )
-
-
-async def restore_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    await update.message.reply_text("📦 Send the backup ZIP file to this chat.", parse_mode="HTML")
-
-
-async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    args = context.args
-    if len(args) != 2:
-        await update.message.reply_text("❌ <code>/addbalance USER_ID Coin</code>", parse_mode="HTML")
-        return
-    try:
-        user_id = int(args[0])
-        amount = float(args[1])
-    except ValueError:
-        await update.message.reply_text("❌ Must be a number.")
-        return
-    add_user_balance(user_id, amount)
-    new_balance = get_user_balance(user_id)
-    await update.message.reply_text(
-        f"✅ <b>Balance added</b>\n\n🆔 <code>{user_id}</code>\n🪙 <b>{amount:.3f} Coin</b>\n🪙 New Balance: <b>{new_balance:.3f} Coin</b>",
-        parse_mode="HTML",
-    )
-    try:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=f"✅ <b>Coin Balance added.</b>\n\n🪙 <b>{new_balance:.3f} Coin</b>",
-            parse_mode="HTML", reply_markup=main_keyboard(),
-        )
-    except Exception as e:
-        print("BALANCE NOTIFY ERROR:", e)
-
-
-async def check_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    args = context.args
-    if len(args) != 1:
-        await update.message.reply_text("❌ <code>/checkbalance USER_ID</code>", parse_mode="HTML")
-        return
-    try:
-        user_id = int(args[0])
-    except ValueError:
-        await update.message.reply_text("❌ User ID must be numeric.")
-        return
-    balance = get_user_balance(user_id)
-    await update.message.reply_text(f"💰 <b>User Balance</b>\n\n🆔 <code>{user_id}</code>\n🪙 <b>{balance:.3f} Coin</b>", parse_mode="HTML")
-
-
-async def block_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    args = context.args
-    if len(args) != 1:
-        await update.message.reply_text(
-            "❌ <code>/block USER_ID</code>\n\n"
-            "📌 <b>Example:</b> <code>/block 5318309992</code>",
-            parse_mode="HTML",
-        )
-        return
-    try:
-        user_id = int(args[0])
-    except ValueError:
-        await update.message.reply_text("❌ User ID must be numeric.")
-        return
-
-    set_access_status(user_id, "rejected")
-
-    await update.message.reply_text(
-        f"✅ <b>User blocked</b>\n\n"
-        f"🆔 User ID: <code>{user_id}</code>\n"
-        f"📌 Status: <b>REJECTED</b>\n\n"
-        f"💡 To unblock: <code>/unblock {user_id}</code>",
-        parse_mode="HTML",
-    )
-
-    try:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=(
-                "❌ <b>Access Blocked</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                "Admin has blocked your Bot access.\n\n"
-                "Contact Admin if you have questions."
-            ),
-            parse_mode="HTML",
-        )
-    except Exception as e:
-        print("BLOCK NOTIFY ERROR:", e)
-
-    try:
-        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
-        admin = update.effective_user
-        uname = f"@{admin.username}" if admin.username else "—"
-
-        alert_text = (
-            "❌ <b>USER BLOCKED</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🆔 Blocked User ID: <code>{user_id}</code>\n"
-            f"👤 By Admin: <b>{html.escape(admin.first_name or '—')}</b>\n"
-            f"🔗 Admin Username: <b>{html.escape(uname)}</b>\n\n"
-            f"📌 Status: <b>REJECTED</b>"
-        )
-        await context.bot.send_message(chat_id=alert_target, text=alert_text, parse_mode="HTML")
-    except Exception as e:
-        print("BLOCK ALERT ERROR:", e)
-
-
-async def unblock_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    args = context.args
-    if len(args) != 1:
-        await update.message.reply_text(
-            "❌ <code>/unblock USER_ID</code>\n\n"
-            "📌 <b>Example:</b> <code>/unblock 5318309992</code>",
-            parse_mode="HTML",
-        )
-        return
-    try:
-        user_id = int(args[0])
-    except ValueError:
-        await update.message.reply_text("❌ User ID must be numeric.")
-        return
-
-    set_access_status(user_id, "approved")
-
-    await update.message.reply_text(
-        f"✅ <b>User unblocked</b>\n\n"
-        f"🆔 User ID: <code>{user_id}</code>\n"
-        f"📌 Status: <b>APPROVED</b>",
-        parse_mode="HTML",
-    )
-
-    try:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=(
-                "✅ <b>Access Restored</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                "Admin has restored your Bot access.\n\n"
-                "Press /start to begin."
-            ),
-            parse_mode="HTML",
-            reply_markup=main_keyboard(),
-        )
-    except Exception as e:
-        print("UNBLOCK NOTIFY ERROR:", e)
-
-    try:
-        alert_target = ALERT_CHAT_ID if ALERT_CHAT_ID else ADMIN_ID
-        admin = update.effective_user
-        uname = f"@{admin.username}" if admin.username else "—"
-
-        alert_text = (
-            "✅ <b>USER UNBLOCKED</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🆔 User ID: <code>{user_id}</code>\n"
-            f"👤 By Admin: <b>{html.escape(admin.first_name or '—')}</b>\n"
-            f"🔗 Admin Username: <b>{html.escape(uname)}</b>\n\n"
-            f"📌 Status: <b>APPROVED</b>"
-        )
-        await context.bot.send_message(chat_id=alert_target, text=alert_text, parse_mode="HTML")
-    except Exception as e:
-        print("UNBLOCK ALERT ERROR:", e)
-
-
-async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    conn = sqlite3.connect(ACCESS_DB)
-    rows = conn.execute(
-        "SELECT user_id, username, first_name, status, requested_at FROM bot_access ORDER BY requested_at DESC"
-    ).fetchall()
-    conn.close()
-
-    if not rows:
-        await update.message.reply_text("📭 No users yet.")
-        return
-
-    approved = sum(1 for r in rows if r[3] == "approved")
-    pending = sum(1 for r in rows if r[3] == "pending")
-    rejected = sum(1 for r in rows if r[3] == "rejected")
-
-    header = (
-        "👥 <b>All Users</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"✅ Approved: <b>{approved}</b>\n"
-        f"⏳ Pending: <b>{pending}</b>\n"
-        f"❌ Rejected: <b>{rejected}</b>\n"
-        f"📊 Total: <b>{len(rows)}</b>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-    )
-
-    lines = [header]
-
-    for uid, uname, fname, status, req_at in rows:
-        emoji = {"approved": "✅", "pending": "⏳", "rejected": "❌"}.get(status, "❓")
-        uname_text = f"@{uname}" if uname else "—"
-        fname_text = html.escape(fname or "—")
-
-        lines.append(
-            f"{emoji} <code>{uid}</code>\n"
-            f"   👤 {fname_text} | 🔗 {uname_text}\n"
-            f"   📌 <b>{status.upper()}</b>\n"
-        )
-
-    text = "\n".join(lines)
-
-    if len(text) > 4000:
-        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
-        for chunk in chunks:
-            await update.message.reply_text(chunk, parse_mode="HTML")
-    else:
-        await update.message.reply_text(text, parse_mode="HTML")
-
-
-async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    args = context.args
-    if len(args) != 3:
-        await update.message.reply_text("❌ <code>/setprice SERVER AMOUNT Coin</code>", parse_mode="HTML")
-        return
-    server, amount = args[0], args[1]
-    try:
-        mc_price = float(args[2])
-    except ValueError:
-        await update.message.reply_text("❌ Coin must be a number.")
-        return
-    set_manual_price(server, amount, mc_price)
-    final_mc = mc_price * MC_PROFIT_MARGIN
-    await update.message.reply_text(
-        f"✅ <b>Price set</b>\n\n🌍 {server}\n💎 {amount}\n💰 Final: <b>{final_mc:.3f} Coin</b>",
-        parse_mode="HTML",
-    )
-
-
-async def delete_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    args = context.args
-    if len(args) != 2:
-        await update.message.reply_text("❌ <code>/delprice SERVER AMOUNT</code>", parse_mode="HTML")
-        return
-    delete_manual_price(args[0], args[1])
-    await update.message.reply_text("✅ <b>Price deleted</b>", parse_mode="HTML")
-
-
-async def list_prices_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    args = context.args
-    server = args[0] if args else None
-    rows = get_all_manual_prices(server)
-    if not rows:
-        await update.message.reply_text("📭 No prices yet.")
-        return
-    lines = ["💰 <b>Manual Prices</b>\n━━━━━━━━━━━━━━━━━━━━"]
-    current = None
-    for srv, amt, mc in rows:
-        if srv != current:
-            lines.append(f"\n🌍 <b>{srv}</b>")
-            current = srv
-        lines.append(f"  💎 {amt} → <b>{mc * MC_PROFIT_MARGIN:.3f} Coin</b>")
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
-
-
-async def add_product_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    args = context.args
-    if len(args) < 2:
-        await update.message.reply_text("❌ <code>/addproduct SERVER AMOUNT [SKU]</code>", parse_mode="HTML")
-        return
-    server, amount = args[0], args[1]
-    sku = args[2] if len(args) > 2 else amount
-    if add_manual_product(server, amount, sku):
-        PRODUCT_CACHE[server] = []
-        refresh_products(server=server, force=True)
-        await update.message.reply_text(
-            f"✅ <b>Product added</b>\n\n🌍 {server}\n💎 {amount}\n🔗 <code>{sku}</code>",
-            parse_mode="HTML",
-        )
-    else:
-        await update.message.reply_text("❌ Failed to add product.")
-
-
-async def del_product_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    args = context.args
-    if len(args) != 2:
-        await update.message.reply_text("❌ <code>/delproduct SERVER AMOUNT</code>", parse_mode="HTML")
-        return
-    if delete_manual_product(args[0], args[1]):
-        PRODUCT_CACHE[args[0]] = []
-        refresh_products(server=args[0], force=True)
-        await update.message.reply_text("✅ <b>Product deleted</b>", parse_mode="HTML")
-    else:
-        await update.message.reply_text("❌ Failed to delete product.")
-
-
-async def list_products_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    args = context.args
-    server = args[0] if args else None
-    rows = get_all_manual_products(server)
-    if not rows:
-        await update.message.reply_text("📭 No manual products yet.")
-        return
-    lines = ["📦 <b>Manual Products</b>\n━━━━━━━━━━━━━━━━━━━━"]
-    current = None
-    for srv, amount, sku, dn in rows:
-        if srv != current:
-            lines.append(f"\n🌍 <b>{srv}</b>")
-            current = srv
-        lines.append(f"  💎 <b>{amount}</b> → <code>{sku}</code>")
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+# ============================================================
+# Chapter 22 — Order Confirm Handlers
+# ============================================================
 
 async def handle_ml_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -2469,10 +2097,7 @@ async def handle_pg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Failed to deduct balance.")
         return
 
-    await query.edit_message_text(
-        "🔄 <b>Processing...</b>\nTrying servers...",
-        parse_mode="HTML",
-    )
+    await query.edit_message_text("🔄 <b>Processing...</b>", parse_mode="HTML")
 
     skus = PUBG_FALLBACK_SKUS[amount_input]
     last_error = None
@@ -2481,7 +2106,6 @@ async def handle_pg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     used_sku = None
 
     for idx, sku in enumerate(skus, 1):
-        print(f"🔄 Trying SKU {idx}/{len(skus)}: {sku}")
         product = {"sku_code": sku, "amount": amount_input, "server": "PUBG"}
         data, error = create_transaction(product, player_id, "")
         if not error:
@@ -2493,7 +2117,7 @@ async def handle_pg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if error:
         add_user_balance(user_id, mc_price)
         await query.edit_message_text(
-            f"❌ <b>Order Failed</b>\n\nBalance has been refunded.",
+            "❌ <b>Order Failed</b>\n\nBalance has been refunded.",
             parse_mode="HTML",
         )
         context.user_data.pop("pg_order", None)
@@ -2681,73 +2305,351 @@ async def handle_tg_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.pop("tg_order", None)
 
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ============================================================
+# Chapter 23 — Admin Panel & Commands
+# ============================================================
+
+def admin_panel_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Dashboard", callback_data="admin:dashboard")],
+        [InlineKeyboardButton("💰 Price", callback_data="admin:price"),
+         InlineKeyboardButton("📦 Product", callback_data="admin:product")],
+        [InlineKeyboardButton("👥 Users", callback_data="admin:users")],
+        [InlineKeyboardButton("💳 Deposits", callback_data="admin:deposits")],
+        [InlineKeyboardButton("📋 Orders", callback_data="admin:orders")],
+        [InlineKeyboardButton("📢 Broadcast", callback_data="admin:broadcast")],
+        [InlineKeyboardButton("💾 Backup (JSON)", callback_data="admin:backup")],
+        [InlineKeyboardButton("📥 Restore (JSON)", callback_data="admin:restore")],
+        [InlineKeyboardButton("🏠 Home", callback_data="menu:main")],
+    ])
+
+
+async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        if update.callback_query:
+            await update.callback_query.answer("❌ Admin only", show_alert=True)
+        else:
+            await update.message.reply_text("❌ Admin only")
+        return
+
+    data, error = get_balance()
+    if error:
+        text = (
+            "⚙️ <b>Admin Panel</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "❌ Melostore API Error\n"
+            f"{html.escape(str(error))}"
+        )
+    else:
+        info = data.get("data", {})
+        balance = info.get("h2h_balance", 0)
+        usd = info.get("h2h_balance_usd", 0)
+        text = (
+            "⚙️ <b>Admin Panel</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🪙 Melostore Balance: <b>{balance:,.2f} Coin</b>\n"
+            f"💵 USD: <b>${usd:,.2f}</b>\n\n"
+            f"🔔 Alert Group: <code>{ALERT_CHAT_ID}</code>\n"
+            f"🧪 Sandbox: <b>{MELO_SANDBOX}</b>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "📌 Select an option below"
+        )
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(text, parse_mode="HTML", reply_markup=admin_panel_menu())
+    else:
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=admin_panel_menu())
+
+
+async def admin_backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.edit_message_text("⏳ <b>Backing up...</b>", parse_mode="HTML")
+
+    json_str = create_backup_cookie()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"cookie_{timestamp}.json"
+
+    file = io.BytesIO(json_str.encode("utf-8"))
+    file.name = filename
+
+    await context.bot.send_document(
+        chat_id=query.from_user.id,
+        document=file,
+        filename=filename,
+        caption=f"✅ <b>Backup completed.</b>\n\n📄 File: <code>{filename}</code>",
+        parse_mode="HTML",
+    )
+    await query.edit_message_text(
+        "✅ Backup completed.\n\n📄 File has been sent.",
+        parse_mode="HTML",
+        reply_markup=admin_panel_menu(),
+    )
+
+
+async def admin_restore(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    context.user_data["state"] = "waiting_for_backup"
+    await query.edit_message_text(
+        "📥 <b>Restore</b>\n\n"
+        "Send the Cookie JSON backup file to this chat.\n\n"
+        "⚠️ Restore will overwrite existing data.",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Cancel", callback_data="admin:panel")]
+        ]),
+    )
+
+
+async def show_admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    conn = sqlite3.connect(USER_BALANCE_DB)
+    total_users = conn.execute("SELECT COUNT(*) FROM user_balance").fetchone()[0]
+    total_orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+    total_balance = conn.execute("SELECT SUM(balance) FROM user_balance").fetchone()[0] or 0
+    conn.close()
+
+    text = (
+        "📊 <b>Admin Dashboard</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👥 Total Users: <b>{total_users}</b>\n"
+        f"📋 Total Orders: <b>{total_orders}</b>\n"
+        f"🪙 Total Balance: <b>{total_balance:.3f} Coin</b>\n"
+    )
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=admin_panel_menu())
+
+
+async def show_admin_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    rows = get_all_manual_prices()
+    if not rows:
+        text = "💰 <b>Manual Prices</b>\n\n📭 No prices yet."
+    else:
+        lines = ["💰 <b>Manual Prices</b>\n━━━━━━━━━━━━━━━━━━━━"]
+        current = None
+        for srv, amt, mc in rows:
+            if srv != current:
+                lines.append(f"\n🌍 <b>{srv}</b>")
+                current = srv
+            lines.append(f"  💎 {amt} → <b>{mc * MC_PROFIT_MARGIN:.3f} Coin</b>")
+        text = "\n".join(lines)
+
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=admin_panel_menu())
+
+
+async def show_admin_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    rows = get_all_manual_products()
+    if not rows:
+        text = "📦 <b>Manual Products</b>\n\n📭 No products yet."
+    else:
+        lines = ["📦 <b>Manual Products</b>\n━━━━━━━━━━━━━━━━━━━━"]
+        current = None
+        for srv, amt, sku, dn in rows:
+            if srv != current:
+                lines.append(f"\n🌍 <b>{srv}</b>")
+                current = srv
+            lines.append(f"  💎 <b>{amt}</b> → <code>{sku}</code>")
+        text = "\n".join(lines)
+
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=admin_panel_menu())
+
+
+async def show_admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    conn = sqlite3.connect(ACCESS_DB)
+    rows = conn.execute("SELECT user_id, username, first_name, status FROM bot_access ORDER BY requested_at DESC").fetchall()
+    conn.close()
+
+    if not rows:
+        text = "👥 <b>Users</b>\n\n📭 No users yet."
+    else:
+        approved = sum(1 for r in rows if r[3] == "approved")
+        pending = sum(1 for r in rows if r[3] == "pending")
+        rejected = sum(1 for r in rows if r[3] == "rejected")
+        text = (
+            "👥 <b>All Users</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"✅ Approved: <b>{approved}</b>\n"
+            f"⏳ Pending: <b>{pending}</b>\n"
+            f"❌ Rejected: <b>{rejected}</b>\n"
+            f"📊 Total: <b>{len(rows)}</b>"
+        )
+
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=admin_panel_menu())
+
+
+# ---------- Admin Text Commands ----------
+
+async def add_balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    if len(args) != 2:
+        await update.message.reply_text("❌ <code>/addbalance USER_ID Coin</code>", parse_mode="HTML")
+        return
+    try:
+        user_id = int(args[0])
+        amount = float(args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Must be a number.")
+        return
+    add_user_balance(user_id, amount)
+    new_balance = get_user_balance(user_id)
+    await update.message.reply_text(
+        f"✅ <b>Balance added</b>\n\n🆔 <code>{user_id}</code>\n🪙 <b>{amount:.3f} Coin</b>\n🪙 New Balance: <b>{new_balance:.3f} Coin</b>",
+        parse_mode="HTML",
+    )
+
+
+async def set_price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    if len(args) != 3:
+        await update.message.reply_text("❌ <code>/setprice SERVER AMOUNT Coin</code>", parse_mode="HTML")
+        return
+    server, amount = args[0], args[1]
+    try:
+        mc_price = float(args[2])
+    except ValueError:
+        await update.message.reply_text("❌ Coin must be a number.")
+        return
+    set_manual_price(server, amount, mc_price)
+    final_mc = mc_price * MC_PROFIT_MARGIN
+    await update.message.reply_text(
+        f"✅ <b>Price set</b>\n\n🌍 {server}\n💎 {amount}\n💰 Final: <b>{final_mc:.3f} Coin</b>",
+        parse_mode="HTML",
+    )
+
+
+async def block_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    if len(args) != 1:
+        await update.message.reply_text("❌ <code>/block USER_ID</code>", parse_mode="HTML")
+        return
+    try:
+        user_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ User ID must be numeric.")
+        return
+    set_access_status(user_id, "rejected")
+    await update.message.reply_text(f"✅ User <code>{user_id}</code> blocked.", parse_mode="HTML")
+
+
+async def unblock_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args
+    if len(args) != 1:
+        await update.message.reply_text("❌ <code>/unblock USER_ID</code>", parse_mode="HTML")
+        return
+    try:
+        user_id = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ User ID must be numeric.")
+        return
+    set_access_status(user_id, "approved")
+    await update.message.reply_text(f"✅ User <code>{user_id}</code> unblocked.", parse_mode="HTML")
+
+# ============================================================
+# Chapter 24 — Callback Router
+# ============================================================
+
+async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
         return
     await query.answer()
     data = query.data or ""
 
-    if data == "back:servers":
-        await query.edit_message_text("🌍 Choose a Server.", reply_markup=server_keyboard())
+    # ---------- Access Control ----------
+    if data.startswith("access:"):
+        await handle_access_callback(update, context)
         return
 
-    if data == "ml:confirm":
-        await handle_ml_confirm(update, context)
-        return
-    if data == "ml:reject":
-        context.user_data.pop("ml_order", None)
-        await query.edit_message_text(
-            "❌ <b>Order Cancelled</b>\n\nPress /start to begin again.",
-            parse_mode="HTML",
-        )
-        return
-
-    if data == "pg:confirm":
-        await handle_pg_confirm(update, context)
-        return
-    if data == "pg:reject":
-        context.user_data.pop("pg_order", None)
-        await query.edit_message_text(
-            "❌ <b>PUBG Order Cancelled</b>\n\nPress /start to begin again.",
-            parse_mode="HTML",
-        )
-        return
-
-    if data == "tg:confirm":
-        await handle_tg_confirm(update, context)
-        return
-    if data == "tg:reject":
-        context.user_data.pop("tg_order", None)
-        await query.edit_message_text(
-            "❌ <b>Telegram Order Cancelled</b>\n\nPress /start to begin again.",
-            parse_mode="HTML",
-        )
-        return
-
-    if data.startswith("reply:"):
+    # ---------- Admin Check ----------
+    if data.startswith("admin:"):
         if query.from_user.id != ADMIN_ID:
             await query.answer("❌ Admin only", show_alert=True)
             return
-        try:
-            user_id = int(data.split(":")[1])
-        except Exception:
-            return
-        context.user_data["reply_to"] = user_id
-        context.user_data["state"] = "admin_reply"
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"↩️ Reply to <code>{user_id}</code>\n\nType your reply.",
-            parse_mode="HTML",
-        )
+
+        if data == "admin:panel":
+            await show_admin_panel(update, context)
+        elif data == "admin:dashboard":
+            await show_admin_dashboard(update, context)
+        elif data == "admin:price":
+            await show_admin_price(update, context)
+        elif data == "admin:product":
+            await show_admin_product(update, context)
+        elif data == "admin:users":
+            await show_admin_users(update, context)
+        elif data == "admin:backup":
+            await admin_backup(update, context)
+        elif data == "admin:restore":
+            await admin_restore(update, context)
         return
 
-    if data.startswith("page:"):
-        parts = data.split(":")
-        server, page = parts[1], int(parts[2])
-        total = len(get_unique_products(server))
-        header = f"💎 <b>{html.escape(server)}</b>\n📦 {total} Products\n📄 Page {page + 1}"
-        await query.edit_message_text(header, parse_mode="HTML", reply_markup=amount_keyboard(server, page=page))
+    # ---------- User Access Check ----------
+    if get_access_status(query.from_user.id) != "approved":
+        await query.answer("🔐 Approval required.", show_alert=True)
+        return
+
+    # ---------- Main Menu ----------
+    if data == "menu:main":
+        user_id = query.from_user.id
+        balance = get_user_balance(user_id)
+        text = (
+            f"✨ <b>Welcome!</b> ✨\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "💎 <b>Eren's Diamond Bot</b>\n\n"
+            f"🪙 <b>Balance:</b> {balance:.3f} Coin\n\n"
+            "👇 Choose from the menu below"
+        )
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=main_menu())
+        return
+
+    if data == "menu:mlbb":
+        await query.edit_message_text("🌍 Choose a Server.", reply_markup=server_keyboard())
+        return
+
+    if data == "menu:wallet":
+        await show_wallet(update, context)
+        return
+
+    if data == "menu:dashboard":
+        await show_dashboard(update, context)
+        return
+
+    if data == "menu:recharge":
+        await show_recharge(update, context)
+        return
+
+    if data == "menu:referral":
+        await show_referral(update, context)
+        return
+
+    if data == "menu:checkin":
+        await show_checkin(update, context)
+        return
+
+    if data == "menu:mission":
+        await show_mission(update, context)
+        return
+
+    # ---------- Recharge Methods ----------
+    if data == "recharge:kpay":
+        await show_kpay(update, context)
+        return
+    if data == "recharge:wave":
+        await show_wave(update, context)
+        return
+
+    # ---------- Server Selection ----------
+    if data == "back:servers":
+        await query.edit_message_text("🌍 Choose a Server.", reply_markup=server_keyboard())
         return
 
     if data.startswith("server:"):
@@ -2766,6 +2668,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total = len(get_unique_products(server))
         header = f"💎 <b>{html.escape(server)}</b>\n📦 {total} Products\n📄 Page 1"
         await query.edit_message_text(header, parse_mode="HTML", reply_markup=amount_keyboard(server, page=0))
+        return
+
+    if data.startswith("page:"):
+        parts = data.split(":")
+        server, page = parts[1], int(parts[2])
+        total = len(get_unique_products(server))
+        header = f"💎 <b>{html.escape(server)}</b>\n📦 {total} Products\n📄 Page {page + 1}"
+        await query.edit_message_text(header, parse_mode="HTML", reply_markup=amount_keyboard(server, page=page))
         return
 
     if data.startswith("amount:"):
@@ -2787,9 +2697,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if server in ("TGS", "TGP"):
             if server == "TGP":
-                prompt = "📧 <b>Email</b> ထည့်ပါ။\nExample: <code>email@gmail.com</code>"
+                prompt = "📧 <b>Email</b>\nExample: <code>email@gmail.com</code>"
             else:
-                prompt = "🎯 <b>Telegram Username</b> ထည့်ပါ။\nExample: <code>@username</code>"
+                prompt = "🎯 <b>Telegram Username</b>\nExample: <code>@username</code>"
         else:
             prompt = "🆔 Enter <b>Player ID</b>.\nExample: <code>12345678</code>"
 
@@ -2804,50 +2714,170 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode="HTML")
         return
 
+    # ---------- Order Confirm ----------
+    if data == "ml:confirm":
+        await handle_ml_confirm(update, context)
+        return
+    if data == "ml:reject":
+        context.user_data.pop("ml_order", None)
+        await query.edit_message_text("❌ <b>Order Cancelled</b>", parse_mode="HTML")
+        return
 
-async def handle_deposit_callback(update, context):
-    query = update.callback_query
-    if query.from_user.id != ADMIN_ID:
-        await query.answer("❌ Admin only", show_alert=True)
+    if data == "pg:confirm":
+        await handle_pg_confirm(update, context)
         return
-    parts = (query.data or "").split(":")
-    action, uid_text = parts[1], parts[2]
-    try:
-        user_id = int(uid_text)
-    except ValueError:
+    if data == "pg:reject":
+        context.user_data.pop("pg_order", None)
+        await query.edit_message_text("❌ <b>PUBG Order Cancelled</b>", parse_mode="HTML")
         return
-    if action == "approve":
-        await query.answer("Use /addbalance.", show_alert=True)
+
+    if data == "tg:confirm":
+        await handle_tg_confirm(update, context)
+        return
+    if data == "tg:reject":
+        context.user_data.pop("tg_order", None)
+        await query.edit_message_text("❌ <b>Telegram Order Cancelled</b>", parse_mode="HTML")
+        return
+
+    # ---------- Deposit Approve/Reject ----------
+    if data.startswith("deposit:"):
+        if query.from_user.id != ADMIN_ID:
+            await query.answer("❌ Admin only", show_alert=True)
+            return
+        parts = data.split(":")
+        action, uid_text = parts[1], parts[2]
+        try:
+            user_id = int(uid_text)
+        except ValueError:
+            return
+        if action == "approve":
+            await query.answer("Use /addbalance.", show_alert=True)
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"💡 <code>/addbalance {user_id} 300</code>",
+                parse_mode="HTML",
+            )
+        elif action == "reject":
+            try:
+                await query.edit_message_caption(caption=(query.message.caption or "") + "\n\n<b>❌ REJECTED</b>", parse_mode="HTML")
+            except Exception:
+                pass
+            try:
+                await context.bot.send_message(chat_id=user_id, text="❌ <b>Deposit rejected.</b>", parse_mode="HTML")
+            except Exception as e:
+                print("REJECT DM ERROR:", e)
+        return
+
+    # ---------- Reply to User ----------
+    if data.startswith("reply:"):
+        if query.from_user.id != ADMIN_ID:
+            await query.answer("❌ Admin only", show_alert=True)
+            return
+        try:
+            user_id = int(data.split(":")[1])
+        except Exception:
+            return
+        context.user_data["reply_to"] = user_id
+        context.user_data["state"] = "admin_reply"
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"💡 <code>/addbalance {user_id} 300</code>",
+            text=f"↩️ Reply to <code>{user_id}</code>\n\nType your reply.",
             parse_mode="HTML",
         )
         return
-    if action == "reject":
-        await query.edit_message_caption(caption=(query.message.caption or "") + "\n\n<b>❌ REJECTED</b>", parse_mode="HTML")
+
+# ============================================================
+# Chapter 25 — Main Function (Final)
+# ============================================================
+
+async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.document:
+        return
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    document = update.message.document
+    file_name = document.file_name or ""
+
+    if file_name.endswith(".json"):
+        await update.message.reply_text("⏳ <b>Restoring...</b>", parse_mode="HTML")
         try:
-            await context.bot.send_message(chat_id=user_id, text="❌ <b>Deposit rejected.</b>", parse_mode="HTML")
+            file = await context.bot.get_file(document.file_id)
+            json_bytes = await file.download_as_bytearray()
+            json_str = bytes(json_bytes).decode("utf-8")
+
+            success, error = restore_backup_cookie(json_str)
+            if success:
+                await update.message.reply_text(
+                    "✅ <b>Restore successful.</b>\n\nPlease redeploy the Bot.",
+                    parse_mode="HTML",
+                )
+            else:
+                await update.message.reply_text(f"❌ Restore failed: {error}")
         except Exception as e:
-            print("REJECT DM ERROR:", e)
-        await query.answer("Rejected ❌")
+            await update.message.reply_text(f"❌ Error: {html.escape(str(e))}")
+        context.user_data.clear()
+        return
+
+    await update.message.reply_text("❌ Please send a JSON file only.")
 
 
-async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if not query:
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
         return
-    data = query.data or ""
-    if data.startswith("access:"):
-        await handle_access_callback(update, context)
+    if not await request_access(update, context):
         return
-    if data.startswith("deposit:"):
-        await handle_deposit_callback(update, context)
+
+    text = update.message.text.strip()
+
+    if text.lower().startswith(".ml "):
+        parts = text.split()
+        if len(parts) < 4:
+            await update.message.reply_text("❌ <code>.ml PLAYER_ID ZONE_ID [SERVER] AMOUNT</code>", parse_mode="HTML")
+            return
+        context.args = parts[1:]
+        await ml_command(update, context)
         return
-    if get_access_status(query.from_user.id) != "approved":
-        await query.answer("🔐 Approval required.", show_alert=True)
+
+    if text.lower().startswith(".pg "):
+        parts = text.split()
+        if len(parts) < 3:
+            await update.message.reply_text("❌ <code>.pg PLAYER_ID AMOUNT</code>", parse_mode="HTML")
+            return
+        context.args = parts[1:]
+        await pg_command(update, context)
         return
-    await callback_handler(update, context)
+
+    if text.lower().startswith(".tg "):
+        parts = text.split()
+        if len(parts) < 3:
+            await update.message.reply_text("❌ <code>.tg TARGET AMOUNT</code>", parse_mode="HTML")
+            return
+        context.args = parts[1:]
+        await tg_command(update, context)
+        return
+
+    state = context.user_data.get("state")
+
+    if state == "admin_reply":
+        if update.effective_user.id != ADMIN_ID:
+            return
+        reply_to = context.user_data.get("reply_to")
+        if not reply_to:
+            return
+        try:
+            await context.bot.send_message(
+                chat_id=reply_to,
+                text=f"📩 <b>Admin Reply</b>\n\n{html.escape(text)}",
+                parse_mode="HTML",
+            )
+            await update.message.reply_text("✅ Reply sent.")
+        except Exception as e:
+            print("REPLY SEND ERROR:", e)
+        context.user_data.clear()
+        return
+
+    await update.message.reply_text("❓ Please use the menu.")
 
 
 async def error_handler(update, context):
@@ -2869,32 +2899,12 @@ async def post_init(application: Application):
 async def post_shutdown(application: Application):
     print("🛑 Bot shutting down...")
 
+
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN not found.")
 
-    if LICENSE_KEY:
-        license_info = validate_license_key(LICENSE_KEY)
-        if not license_info:
-            print("❌ LICENSE_KEY is invalid.")
-            return
-        try:
-            expiry = datetime.strptime(license_info["expiry_date"], "%Y-%m-%d")
-            if datetime.now() > expiry:
-                print("❌ LICENSE_KEY has expired.")
-                return
-            print(f"✅ License Valid: {license_info['expiry_date']}")
-        except Exception as e:
-            print(f"❌ License Error: {e}")
-            return
-
-    init_access_db()
-    init_balance_db()
-    init_subscription_db()
-    init_user_api_db()
-    init_manual_price_db()
-    init_manual_product_db()
-    backup_databases()
+    init_all_db()
 
     print("🤖 Starting...")
     print(f"🧪 Sandbox: {MELO_SANDBOX}")
@@ -2908,25 +2918,15 @@ def main():
         .build()
     )
 
+    # Handlers
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("idcheck", start_check_id))
-    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("admin", show_admin_panel))
     app.add_handler(CommandHandler("addbalance", add_balance_command))
-    app.add_handler(CommandHandler("checkbalance", check_balance_command))
+    app.add_handler(CommandHandler("setprice", set_price_command))
     app.add_handler(CommandHandler("block", block_user_command))
     app.add_handler(CommandHandler("unblock", unblock_user_command))
-    app.add_handler(CommandHandler("listusers", list_users_command))
-    app.add_handler(CommandHandler("setprice", set_price_command))
-    app.add_handler(CommandHandler("delprice", delete_price_command))
-    app.add_handler(CommandHandler("listprices", list_prices_command))
-    app.add_handler(CommandHandler("addproduct", add_product_command))
-    app.add_handler(CommandHandler("delproduct", del_product_command))
-    app.add_handler(CommandHandler("listproducts", list_products_command))
-    app.add_handler(CommandHandler("backup", backup_command))
-    app.add_handler(CommandHandler("restore", restore_command))
 
     app.add_handler(CallbackQueryHandler(callback_router))
-    app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     app.add_error_handler(error_handler)
